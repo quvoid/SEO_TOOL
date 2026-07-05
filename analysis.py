@@ -85,11 +85,11 @@ def grok_reasoning(
     system: str | None = None,
     max_tokens: int = 1200,
 ) -> str:
-    """Call xAI Grok for deep AI Strategic Analysis. Falls back to placeholder if no key.
-    Grok is used for: Module 7 UX deep-dive, Executive Summary, On-Page SEO Blueprint.
-    Uses the OpenAI-compatible xAI endpoint."""
+    """Call xAI Grok (or Groq if api_key starts with 'gsk_') for deep AI Strategic Analysis.
+    Falls back to placeholder if no key.
+    Uses the OpenAI-compatible chat completions endpoint."""
     if not api_key:
-        return "_[Grok AI analysis disabled — add xai.api_key in secrets.toml for strategic insights.]_"
+        return "_[AI strategic analysis disabled — add xai.api_key in secrets.toml for strategic insights.]_"
 
     sys = system or (
         "You are a world-class SEO strategist and digital growth consultant. "
@@ -97,6 +97,12 @@ def grok_reasoning(
         "Be specific — cite exact metrics. Use clear structure with headers/bullets. "
         "Never hedge. Be directive. End every section with a concrete, prioritised action."
     )
+
+    # Automatically detect if Groq key is used (starts with gsk_)
+    is_groq = api_key.startswith("gsk_")
+    endpoint = "https://api.groq.com/openai/v1/chat/completions" if is_groq else "https://api.x.ai/v1/chat/completions"
+    model = "llama-3.3-70b-versatile" if is_groq else "grok-3-mini"
+    label = "Groq" if is_groq else "Grok"
 
     max_attempts, base_wait = 4, 10
     for attempt in range(max_attempts):
@@ -107,7 +113,7 @@ def grok_reasoning(
                 "Content-Type": "application/json",
             }
             payload = {
-                "model": "grok-3-mini",
+                "model": model,
                 "messages": [
                     {"role": "system", "content": sys},
                     {"role": "user", "content": prompt},
@@ -116,7 +122,7 @@ def grok_reasoning(
                 "temperature": 0.3,
             }
             resp = requests.post(
-                "https://api.x.ai/v1/chat/completions",
+                endpoint,
                 headers=headers,
                 json=payload,
                 timeout=90,
@@ -125,7 +131,7 @@ def grok_reasoning(
                 if attempt < max_attempts - 1:
                     _time.sleep(base_wait * (2 ** attempt))
                     continue
-                return "_[Grok rate limit reached. Structured findings above are still valid.]_"
+                return f"_[{label} rate limit reached. Structured findings above are still valid.]_"
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"]
         except Exception as exc:
@@ -134,10 +140,10 @@ def grok_reasoning(
                 _time.sleep(base_wait * (2 ** attempt))
                 continue
             return (
-                f"_[Grok strategic analysis unavailable: {exc}. "
+                f"_[{label} strategic analysis unavailable: {exc}. "
                 "Structured findings above are still valid.]_"
             )
-    return "_[Grok analysis unavailable: max retries exceeded.]_"
+    return f"_[{label} analysis unavailable: max retries exceeded.]_"
 
 
 
