@@ -1,0 +1,9 @@
+streamlit>=1.40
+pandas>=2.0
+google-generativeai>=0.8
+google-analytics-data>=0.18
+google-api-python-client>=2.130
+google-auth>=2.30
+google-auth-oauthlib>=1.2
+requests>=2.31
+plotly>=5.0

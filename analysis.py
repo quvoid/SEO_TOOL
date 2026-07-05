@@ -1,0 +1,672 @@
+"""
+analysis.py — Analysis modules + AI reasoning layer.
+
+Each module is a pure function: takes already-fetched data (demo or live),
+computes structured findings, then builds a Claude prompt for narrative.
+
+Modules:
+  1  Organic Performance Intelligence  (GA4 + GSC)
+  2  User Journey Intelligence         (GA4 + Clarity)
+  3  Funnel Drop-off                   (funnel steps)
+  4  Heatmap / Click Interpretation    (Clarity)
+  5  Scroll Analysis                   (Clarity)
+  6  Keyword Intelligence              (GSC queries + Ads Keyword Planner)
+  10 Executive Summary                 (synthesises all modules)
+
+If no Anthropic key is set, reasoning() returns a placeholder so the app
+stays fully usable in demo / no-key mode.
+"""
+
+from __future__ import annotations
+
+DEFAULT_MODEL = "gemini-2.5-flash"
+
+
+# ===========================================================================
+# AI reasoning layer
+# ===========================================================================
+def reasoning(
+    prompt: str,
+    api_key: str | None,
+    model: str = DEFAULT_MODEL,
+    system: str | None = None,
+    max_tokens: int = 700,
+) -> str:
+    """Call Gemini to narrate findings. Falls back gracefully if no key."""
+    if not api_key:
+        return (
+            "_[AI narrative disabled — add a Gemini API key in secrets.toml "
+            "to generate written analysis. All tables and charts above are real "
+            "computed findings.]_"
+        )
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+
+        model_name = model
+        # Map any legacy Claude model names to Gemini
+        if "claude" in model_name:
+            model_name = "gemini-2.5-flash"
+
+        sys = system or (
+            "You are a senior SEO and CRO analyst writing for a digital agency. "
+            "Be concise, specific and actionable. Reference the exact numbers given. "
+            "Output 2-4 short paragraphs or tight bullets. No preamble, no fluff. "
+            "End with a clearly labelled 'Recommendation:' line."
+        )
+
+        config = genai.types.GenerationConfig(
+            max_output_tokens=max_tokens,
+            temperature=0.2,
+        )
+
+        gemini_model = genai.GenerativeModel(
+            model_name=model_name,
+            system_instruction=sys,
+        )
+
+        response = gemini_model.generate_content(prompt, generation_config=config)
+        return response.text
+    except Exception as exc:
+        return (
+            f"_[AI narrative unavailable: {exc}. "
+            "Structured findings above are still valid.]_"
+        )
+
+
+def _pct(cur, prev):
+    if not prev:
+        return None
+    return (cur - prev) / prev * 100.0
+
+
+def _normalize_page(p: str) -> str:
+    """Extracts path part from a URL/path to allow matching between GA4 (paths) and GSC/Clarity (URLs)."""
+    if not p:
+        return ""
+    if "://" in p:
+        p = p.split("://", 1)[1]
+    if "/" in p:
+        p = "/" + p.split("/", 1)[1]
+    else:
+        p = "/"
+    return p.split("?")[0].rstrip("/") or "/"
+
+
+# ===========================================================================
+# Module 1 — Organic Performance Intelligence
+# ===========================================================================
+def module_organic_performance(ga4_rows, gsc_rows, ga4_totals, api_key, model):
+    # Normalize GSC keys
+    gsc_by_page = {_normalize_page(r["page"]): r for r in gsc_rows}
+
+    total_sessions = ga4_totals.get("current_total", 0) or sum(r["sessions"] for r in ga4_rows)
+    total_prev = ga4_totals.get("prev_total", 0) or sum(r["prev_sessions"] for r in ga4_rows)
+    overall_delta = _pct(total_sessions, total_prev)
+
+    page_findings = []
+    for r in ga4_rows:
+        delta = _pct(r["sessions"], r["prev_sessions"])
+        norm_path = _normalize_page(r["page_path"])
+        g = gsc_by_page.get(norm_path, {})
+        ctr_delta = (
+            _pct(g.get("ctr", 0), g.get("prev_ctr", 0)) if g else None
+        )
+        pos_delta = (
+            (g.get("position", 0) - g.get("prev_position", 0)) if g else None
+        )
+        page_findings.append({
+            "page": r["page_path"],
+            "sessions": r["sessions"],
+            "session_delta_pct": delta,
+            "ctr": g.get("ctr"),
+            "ctr_delta_pct": ctr_delta,
+            "position": g.get("position"),
+            "position_delta": pos_delta,
+        })
+
+    losers = sorted(
+        [p for p in page_findings if (p["session_delta_pct"] or 0) < 0],
+        key=lambda p: p["session_delta_pct"],
+    )[:5]
+    gainers = sorted(
+        [p for p in page_findings if (p["session_delta_pct"] or 0) > 0],
+        key=lambda p: p["session_delta_pct"],
+        reverse=True,
+    )[:3]
+
+    loser_lines = "\n".join(
+        f"- {p['page']}: sessions {p['session_delta_pct']:+.0f}%, "
+        f"CTR {('%+.0f%%' % p['ctr_delta_pct']) if p['ctr_delta_pct'] is not None else 'n/a'}, "
+        f"avg position {f'{p['position']:.1f}' if p['position'] is not None else 'n/a'} "
+        f"({f'{p['position_delta']:+.1f}' if p['position_delta'] is not None else 'n/a'})"
+        for p in losers
+    ) or "- none"
+
+    prompt = (
+        f"Overall organic sessions changed {overall_delta:+.0f}% vs the prior period "
+        f"({total_prev:,} → {total_sessions:,}).\n\n"
+        f"Top declining pages (page: session change, CTR change, avg position + change):\n"
+        f"{loser_lines}\n\n"
+        "For each declining page, identify the most likely cause (CTR erosion vs "
+        "ranking loss vs impression loss) and give a specific fix. A page where CTR "
+        "fell but position held points to title/meta/snippet problems, not algorithm loss."
+    )
+    narrative = reasoning(prompt, api_key, model)
+
+    return {
+        "title": "Module 1 — Organic Performance",
+        "overall_delta_pct": overall_delta,
+        "total_sessions": total_sessions,
+        "total_prev_sessions": total_prev,
+        "losers": losers,
+        "gainers": gainers,
+        "all_pages": page_findings,
+        "narrative": narrative,
+    }
+
+
+# ===========================================================================
+# Module 2 — User Journey Intelligence (GA4 + Clarity)
+# ===========================================================================
+def module_user_journey(ga4_rows, clarity_rows, api_key, model):
+    clarity_by_url = {_normalize_page(c["url"]): c for c in clarity_rows}
+    flagged = []
+    for r in ga4_rows:
+        norm_path = _normalize_page(r["page_path"])
+        c = clarity_by_url.get(norm_path)
+        if not c:
+            continue
+        high_bounce = r["bounce_rate"] >= 0.60
+        low_scroll = c["avg_scroll_percent"] < 40
+        many_dead = c["dead_clicks"] >= 100
+        if high_bounce and (low_scroll or many_dead):
+            flagged.append({
+                "page": r["page_path"],
+                "bounce_rate": r["bounce_rate"],
+                "scroll_percent": c["avg_scroll_percent"],
+                "dead_clicks": c["dead_clicks"],
+                "rage_clicks": c["rage_clicks"],
+                "avg_session_duration": r["avg_session_duration"],
+            })
+    flagged.sort(
+        key=lambda f: (f["bounce_rate"], -f["scroll_percent"]), reverse=True
+    )
+
+    if flagged:
+        lines = "\n".join(
+            f"- {f['page']}: bounce {f['bounce_rate']*100:.0f}%, "
+            f"scroll depth {f['scroll_percent']:.0f}%, "
+            f"{f['dead_clicks']} dead clicks, {f['rage_clicks']} rage clicks, "
+            f"avg time {f['avg_session_duration']:.0f}s"
+            for f in flagged
+        )
+        prompt = (
+            "These landing pages combine high bounce with shallow scrolling and/or "
+            f"dead clicks — a UX problem signature:\n{lines}\n\n"
+            "For each, explain what users are likely doing and the single "
+            "highest-impact fix."
+        )
+    else:
+        prompt = (
+            "No landing pages show the high-bounce + low-scroll/dead-click pattern. "
+            "Briefly confirm UX looks healthy."
+        )
+    narrative = reasoning(prompt, api_key, model)
+    return {
+        "title": "Module 2 — User Journey",
+        "flagged": flagged,
+        "narrative": narrative,
+    }
+
+
+# ===========================================================================
+# Module 3 — Funnel Drop-off
+# ===========================================================================
+def module_funnel(funnel, api_key, model):
+    steps = []
+    for i, s in enumerate(funnel):
+        prev = funnel[i - 1]["users"] if i else None
+        drop = (1 - s["users"] / prev) * 100 if prev else 0.0
+        steps.append({"step": s["step"], "users": s["users"], "drop_pct": drop})
+
+    biggest = (
+        max(steps[1:], key=lambda s: s["drop_pct"]) if len(steps) > 1 else None
+    )
+    overall = (steps[-1]["users"] / steps[0]["users"] * 100) if steps else 0.0
+
+    lines = "\n".join(
+        f"- {s['step']}: {s['users']} users"
+        + (f" ({s['drop_pct']:.0f}% drop from previous)" if s["drop_pct"] else "")
+        for s in steps
+    )
+    prompt = (
+        f"Conversion funnel:\n{lines}\n\n"
+        f"Overall completion: {overall:.1f}%. Biggest single drop: "
+        f"{biggest['step'] if biggest else 'n/a'} "
+        f"({biggest['drop_pct']:.0f}% if applicable).\n"
+        "Identify the biggest friction point and give a concrete fix plus a realistic "
+        "estimate of conversion lift if fixed."
+    )
+    narrative = reasoning(prompt, api_key, model)
+    return {
+        "title": "Module 3 — Funnel Drop-off",
+        "steps": steps,
+        "biggest_drop": biggest,
+        "overall_completion_pct": overall,
+        "narrative": narrative,
+    }
+
+
+# ===========================================================================
+# Module 4 — Heatmap / Click Interpretation
+# ===========================================================================
+def module_heatmap(clarity_rows, api_key, model):
+    ranked = sorted(
+        clarity_rows,
+        key=lambda c: c["dead_clicks"] + c["rage_clicks"] * 2,
+        reverse=True,
+    )[:5]
+    flagged = [
+        c for c in ranked if c["dead_clicks"] >= 50 or c["rage_clicks"] >= 10
+    ]
+    lines = "\n".join(
+        f"- {c['url']}: {c['dead_clicks']} dead clicks, {c['rage_clicks']} rage clicks, "
+        f"{c['quickback_clicks']} quickbacks across {c['total_sessions']} sessions"
+        for c in (flagged or ranked[:3])
+    )
+    prompt = (
+        f"Clarity click-frustration signals by page:\n{lines}\n\n"
+        "Dead clicks = users clicking non-interactive elements (often images that look "
+        "clickable). Rage clicks = repeated frustrated clicks. Quickbacks = users "
+        "bouncing straight back. For the worst pages, infer the likely UX cause and the fix."
+    )
+    narrative = reasoning(prompt, api_key, model)
+    return {
+        "title": "Module 4 — Heatmap / Click",
+        "flagged": flagged,
+        "narrative": narrative,
+    }
+
+
+# ===========================================================================
+# Module 5 — Scroll Analysis
+# ===========================================================================
+def module_scroll(clarity_rows, api_key, model):
+    # Sort all pages by scroll depth ascending (worst first)
+    all_pages = sorted(
+        clarity_rows,
+        key=lambda c: c["avg_scroll_percent"]
+    )
+    low = [c for c in all_pages if c["avg_scroll_percent"] < 40]
+    
+    lines = "\n".join(
+        f"- {c['url']}: avg scroll depth {c['avg_scroll_percent']:.0f}% "
+        f"({c['total_sessions']} sessions)"
+        for c in low
+    ) or "- no pages below 40% scroll depth"
+    prompt = (
+        f"Pages where most users never scroll far (below 40% average depth):\n{lines}\n\n"
+        "Explain the likely cause (long intros, heavy banners, mismatched expectation) "
+        "and recommend content re-ordering to surface key sections / CTAs higher."
+    )
+    narrative = reasoning(prompt, api_key, model)
+    return {
+        "title": "Module 5 — Scroll Analysis",
+        "low_scroll_pages": low,
+        "all_pages": all_pages,
+        "narrative": narrative,
+    }
+
+
+# ===========================================================================
+# Module 6 — Keyword Intelligence (GSC ranking queries)
+# ===========================================================================
+def module_keyword_intelligence(
+    gsc_queries: list[dict],
+    api_key: str | None,
+    model: str,
+) -> dict:
+    """
+    Analyzes GSC queries to find high-impression keywords ranking in
+    positions 4–20, representing high-value, quick-win SEO opportunities.
+
+    Opportunity logic:
+      - Keywords ranking in positions 4–20 (close to top 3, fixable with optimization)
+      - Monthly impressions >= 100 (has traffic visibility)
+      - Sorted by click uplift potential (impressions * target top-3 CTR - current clicks)
+    """
+    ESTIMATED_CTR_TOP3 = 0.10     # estimated 10% average CTR for top 3
+    MIN_IMPRESSIONS = 100
+    OPP_POSITION_LOW = 4
+    OPP_POSITION_HIGH = 20
+
+    opportunities = []
+
+    for row in gsc_queries:
+        query = row.get("query", "")
+        position = row.get("position", 100)
+        current_clicks = row.get("clicks", 0)
+        impressions = row.get("impressions", 0)
+
+        if impressions >= MIN_IMPRESSIONS and OPP_POSITION_LOW <= position <= OPP_POSITION_HIGH:
+            potential_clicks = int(impressions * ESTIMATED_CTR_TOP3)
+            click_uplift = max(0, potential_clicks - current_clicks)
+            opportunities.append({
+                "query": query,
+                "position": round(position, 1),
+                "impressions": impressions,
+                "current_clicks": current_clicks,
+                "potential_clicks": potential_clicks,
+                "click_uplift": click_uplift,
+            })
+
+    opportunities.sort(key=lambda o: o["click_uplift"], reverse=True)
+    top_opps = opportunities[:10]
+
+    if not top_opps:
+        lines = "- No keywords found in the position 4–20 range with significant impressions."
+        prompt = (
+            f"Keyword opportunity scan:\n{lines}\n\n"
+            "Briefly note that the site either ranks very well already (top 3) or "
+            "targets low-volume terms. Suggest next steps."
+        )
+        narrative = reasoning(prompt, api_key, model)
+    else:
+        lines = "\n".join(
+            f"- '{o['query']}': position {o['position']}, "
+            f"{o['impressions']:,} impressions, "
+            f"{o['current_clicks']} current clicks → ~{o['potential_clicks']:,} at top 3 (est), "
+            f"potential click uplift: +{o['click_uplift']:,}"
+            for o in top_opps[:6]
+        )
+        prompt = (
+            f"Keyword opportunity analysis — keywords the site ranks for but not in top 3:\n"
+            f"{lines}\n\n"
+            "For the top 3 opportunities by click uplift, explain: "
+            "(1) why this keyword is worth targeting based on its GSC impressions, "
+            "(2) the specific content or technical change needed to push it into top 3, "
+            "(3) realistic monthly click uplift and SEO timeline. "
+            "Order by ROI. Be specific about tactics."
+        )
+        narrative = reasoning(prompt, api_key, model)
+
+    return {
+        "title": "Module 6 — Keyword Intelligence",
+        "opportunities": top_opps,
+        "total_queries_analysed": len(gsc_queries),
+        "narrative": narrative,
+    }
+
+
+# ===========================================================================
+# Module 7 — Declining Pages UX Audit (GSC × Clarity × PageSpeed)
+# ===========================================================================
+def module_ux_audit(ga4_rows, gsc_rows, clarity_rows, pagespeed_data, api_key, model):
+    gsc_by_page = {_normalize_page(r["page"]): r for r in gsc_rows}
+    clarity_by_page = {_normalize_page(c["url"]): c for c in clarity_rows}
+
+    # Find the top declining landing pages (top 5 worst session drops)
+    declining = sorted(
+        [r for r in ga4_rows if (r.get("sessions", 0) - r.get("prev_sessions", 0)) < 0],
+        key=lambda r: (r.get("sessions", 0) - r.get("prev_sessions", 0))
+    )[:5]
+
+    audit_rows = []
+    for r in declining:
+        norm_path = _normalize_page(r["page_path"])
+        g = gsc_by_page.get(norm_path, {})
+        c = clarity_by_page.get(norm_path, {})
+        ps = pagespeed_data.get(norm_path, {})
+
+        session_delta = r["sessions"] - r["prev_sessions"]
+        session_delta_pct = (session_delta / r["prev_sessions"] * 100.0) if r["prev_sessions"] else 0.0
+
+        # Risk level logic
+        dead = c.get("dead_clicks", 0)
+        rage = c.get("rage_clicks", 0)
+        score = ps.get("performance_score")
+        
+        risk = "Healthy"
+        if dead > 50 or rage > 10 or (score is not None and score < 50):
+            risk = "🚨 Critical UX Risk"
+        elif dead > 20 or rage > 3 or (score is not None and score < 70):
+            risk = "⚠️ Medium UX Risk"
+
+        audit_rows.append({
+            "page": r["page_path"],
+            "session_change": session_delta,
+            "session_change_pct": session_delta_pct,
+            "sessions": r["sessions"],
+            "avg_position": g.get("position"),
+            "dead_clicks": dead,
+            "rage_clicks": rage,
+            "avg_scroll_percent": c.get("avg_scroll_percent"),
+            "pagespeed_score": score,
+            "lcp": ps.get("lcp"),
+            "cls": ps.get("cls"),
+            "inp": ps.get("inp"),
+            "risk_level": risk
+        })
+
+    lines = []
+    for row in audit_rows:
+        lines.append(
+            f"- {row['page']}: change {row['session_change_pct']:+.0f}% (sessions: {row['sessions']}), "
+            f"position {f'{row['avg_position']:.1f}' if row['avg_position'] is not None else 'n/a'}, "
+            f"PageSpeed {row['pagespeed_score'] if row['pagespeed_score'] is not None else 'n/a'}%, "
+            f"Dead/Rage Clicks: {row['dead_clicks']}/{row['rage_clicks']}, "
+            f"risk: {row['risk_level']}"
+        )
+    prompt = (
+        "These top declining pages show a combination of search rank, user experience, and page speed performance metrics:\n"
+        + "\n".join(lines)
+        + "\n\nFor each declining page, diagnose the primary driver of the traffic drop: "
+        "is it Google algorithm rank decay, severe user experience friction (rage/dead clicks), or poor page speed (PageSpeed score & Core Web Vitals)? "
+        "Provide specific, actionable performance/speed or UX fixes."
+    )
+    narrative = reasoning(prompt, api_key, model)
+
+    return {
+        "title": "Module 7 — Declining Pages UX & Performance Audit",
+        "audit_rows": audit_rows,
+        "narrative": narrative
+    }
+
+
+# ===========================================================================
+# Module 8 — Hidden Insights Engine
+# ===========================================================================
+def module_hidden_insights(ga4_rows, gsc_rows, clarity_rows, api_key, model):
+    gsc_by_page = {_normalize_page(r["page"]): r for r in gsc_rows}
+    clarity_by_page = {_normalize_page(c["url"]): c for c in clarity_rows}
+
+    zombies = []
+    gems = []
+    cows = []
+
+    # Calculate average impressions to find high-impression threshold
+    all_imps = [r["impressions"] for r in gsc_rows]
+    avg_imps = sum(all_imps) / len(all_imps) if all_imps else 1000
+    imp_threshold = max(avg_imps * 0.5, 500)
+
+    # Calculate average sessions to find high-performing pages
+    all_sess = [r["sessions"] for r in ga4_rows]
+    avg_sess = sum(all_sess) / len(all_sess) if all_sess else 100
+
+    # 1. Zombie Pages: High impressions but low CTR/click volume
+    for r in gsc_rows:
+        if r["impressions"] >= imp_threshold and r["ctr"] < 0.015 and r["position"] < 20:
+            zombies.append({
+                "page": r["page"],
+                "impressions": r["impressions"],
+                "clicks": r["clicks"],
+                "ctr": r["ctr"] * 100.0,
+                "position": r["position"]
+            })
+
+    # 2. Unexplored Gems: High user engagement (Clarity/GA4) but low search visibility (GSC)
+    for r in ga4_rows:
+        norm_path = _normalize_page(r["page_path"])
+        g = gsc_by_page.get(norm_path, {})
+        c = clarity_by_page.get(norm_path, {})
+        
+        # High scroll depth (>50%) and high engagement time, but low GSC impressions
+        has_engagement = c.get("avg_scroll_percent", 0) > 50 or r.get("avg_session_duration", 0) > 90
+        low_gsc = not g or g.get("impressions", 0) < 300
+        if has_engagement and low_gsc and r["sessions"] > 50:
+            gems.append({
+                "page": r["page_path"],
+                "sessions": r["sessions"],
+                "avg_scroll_percent": c.get("avg_scroll_percent", 0.0),
+                "avg_duration": r["avg_session_duration"],
+                "impressions": g.get("impressions", 0) if g else 0
+            })
+
+    # 3. Friction Cash Cows: High converting pages with high UX frustration
+    for r in ga4_rows:
+        norm_path = _normalize_page(r["page_path"])
+        c = clarity_by_page.get(norm_path, {})
+        
+        high_conv = r.get("conversions", 0) > 0 or r["sessions"] > avg_sess * 1.5
+        high_friction = c.get("dead_clicks", 0) > 40 or c.get("rage_clicks", 0) > 10
+        if high_conv and high_friction:
+            cows.append({
+                "page": r["page_path"],
+                "conversions": r.get("conversions", 0),
+                "sessions": r["sessions"],
+                "dead_clicks": c.get("dead_clicks", 0),
+                "rage_clicks": c.get("rage_clicks", 0)
+            })
+
+    # Sort opportunities
+    zombies = sorted(zombies, key=lambda z: z["impressions"], reverse=True)[:5]
+    gems = sorted(gems, key=lambda g: g["avg_scroll_percent"], reverse=True)[:5]
+    cows = sorted(cows, key=lambda c: c["dead_clicks"], reverse=True)[:5]
+
+    bullets = []
+    if zombies:
+        bullets.append(f"Zombie Pages (Needs title/snippet rewrite): " + ", ".join(z["page"] for z in zombies[:2]))
+    if gems:
+        bullets.append(f"Unexplored Gems (Needs SEO push/internal linking): " + ", ".join(g["page"] for g in gems[:2]))
+    if cows:
+        bullets.append(f"Friction Cash Cows (Needs CRO fixes): " + ", ".join(c["page"] for c in cows[:2]))
+
+    prompt = (
+        "Identify hidden patterns and anomalies on the site. We categorized three patterns:\n"
+        f"- Zombie Pages (high impressions, low CTR, position < 20): {zombies}\n"
+        f"- Unexplored Gems (high engagement/scroll depth, low search visibility): {gems}\n"
+        f"- Friction Cash Cows (high converting/traffic pages, high rage/dead clicks): {cows}\n\n"
+        "Explain the strategic growth opportunities for these pages. Formulate specific actions "
+        "to double traffic/conversions on these flagged URLs."
+    )
+    narrative = reasoning(prompt, api_key, model)
+
+    return {
+        "title": "Module 8 — Hidden Growth Insights",
+        "zombies": zombies,
+        "gems": gems,
+        "cows": cows,
+        "narrative": narrative
+    }
+
+
+# ===========================================================================
+# Module 9 — Jina-Powered On-Page SEO Recommender (Helper Tool)
+# ===========================================================================
+def module_onpage_seo(jina_markdown: str, gsc_queries: list, pagespeed_stats: dict, api_key: str | None, model: str) -> str:
+    """Uses scraped page markdown copy + GSC queries to generate a copywriting blueprint."""
+    q_lines = "\n".join(
+        f"- {q['query']}: clicks {q['clicks']}, impressions {q['impressions']}, avg position {q['position']:.1f}"
+        for q in gsc_queries[:10]
+    ) or "- No search console queries found"
+
+    score = pagespeed_stats.get("performance_score")
+    lcp = pagespeed_stats.get("lcp")
+    cls = pagespeed_stats.get("cls")
+    inp = pagespeed_stats.get("inp")
+
+    prompt = (
+        "You are an elite SEO and Conversion Rate Optimization (CRO) copywriter.\n"
+        "We scraped the live text of a page using Jina Reader:\n"
+        "[START JINA MARKDOWN]\n"
+        f"{jina_markdown[:15000]}\n"  # Truncate to protect context window limits
+        "[END JINA MARKDOWN]\n\n"
+        "Here are the core search terms this page currently ranks for in Google Search Console:\n"
+        f"{q_lines}\n\n"
+        "Its mobile performance core web vitals are:\n"
+        f"- Performance Score: {score if score is not None else 'n/a'}%\n"
+        f"- Largest Contentful Paint (LCP): {f'{lcp}s' if lcp is not None else 'n/a'}\n"
+        f"- Cumulative Layout Shift (CLS): {cls if cls is not None else 'n/a'}\n"
+        f"- Interaction to Next Paint (INP): {f'{inp}ms' if inp is not None else 'n/a'}\n\n"
+        "Produce a detailed, structured, copy-paste-ready Optimization Blueprint:\n"
+        "1. Click-Optimized HTML Title Tag & Meta Description (within 60/160 character limits) containing the primary ranking keywords. "
+        "CRITICAL: Do NOT output raw unescaped HTML tags like <title> or <meta> directly in the markdown because the browser will hide them. "
+        "Either format them as plain text (e.g. 'Title Tag: Exploring Houses') or wrap them in escaped HTML code blocks (e.g. ````html ... ````).\n"
+        "2. Heading Restructuring: Suggest H1/H2 additions or updates to target semantic search query gaps.\n"
+        "3. Actionable Copy Additions: Draft the actual copy (paragraphs, lists, tables) to insert on the page to solve search intent better.\n"
+        "4. Page Speed & UX fixes: Map the Core Web Vitals issues (LCP/CLS/INP) to practical technical speed improvements.\n"
+        "Make it highly professional, clean, and ready for development. Output in clean Markdown."
+    )
+    return reasoning(prompt, api_key, model, max_tokens=1000)
+
+
+# ===========================================================================
+# Module 10 — Executive Summary & Roadmap Planner
+# ===========================================================================
+def module_executive_summary(results: dict, api_key: str | None, model: str) -> dict:
+    m1 = results.get("organic", {})
+    bullets = []
+    bullets.append(
+        f"Organic sessions {m1.get('overall_delta_pct', 0):+.0f}% vs prior period."
+    )
+    if m1.get("losers"):
+        worst = m1["losers"][0]
+        bullets.append(
+            f"Biggest SEO issue: {worst['page']} sessions {worst['session_delta_pct']:+.0f}%."
+        )
+    
+    uj = results.get("journey", {})
+    if uj.get("flagged"):
+        bullets.append(
+            f"Biggest UX issue: {uj['flagged'][0]['page']} "
+            f"(bounce {uj['flagged'][0]['bounce_rate']*100:.0f}%, "
+            f"scroll {uj['flagged'][0]['scroll_percent']:.0f}%)."
+        )
+
+    m7 = results.get("ux_audit", {})
+    if m7.get("audit_rows"):
+        worst_speed = sorted(
+            [r for r in m7["audit_rows"] if r.get("pagespeed_score") is not None],
+            key=lambda r: r["pagespeed_score"]
+        )
+        if worst_speed:
+            bullets.append(
+                f"PageSpeed: {worst_speed[0]['page']} is slowest with {worst_speed[0]['pagespeed_score']}% score."
+            )
+
+    m8 = results.get("hidden_insights", {})
+    if m8.get("zombies"):
+        bullets.append(f"SEO Opportunity: '{m8['zombies'][0]['page']}' is a Zombie page with {m8['zombies'][0]['impressions']:,} impressions but low CTR.")
+    if m8.get("cows"):
+        bullets.append(f"CRO Opportunity: '{m8['cows'][0]['page']}' converts leads but has high frustration ({m8['cows'][0]['dead_clicks']} dead clicks).")
+
+    prompt = (
+        "Write a tight executive summary for stakeholders based on these findings:\n"
+        + "\n".join(f"- {b}" for b in bullets)
+        + "\n\nProduce:\n"
+        "1. A one-line executive health verdict.\n"
+        "2. The top 3 prioritised actions with expected business impact, ordered by ROI.\n"
+        "3. A structured 3-Month Growth Strategy Calendar:\n"
+        "   - Month 1: Speed & Immediate CRO Fixes (Core Web Vitals, rage/dead clicks)\n"
+        "   - Month 2: Low-Hanging SEO Wins (Zombie page titles, ranking positions 4-20)\n"
+        "   - Month 3: Content Expansion & Link Building (Unexplored Gems, cannibalization)\n\n"
+        "Keep it professional, highly structured, and boardroom-ready."
+    )
+    narrative = reasoning(prompt, api_key, model, max_tokens=800)
+    return {
+        "title": "Module 10 — Executive Summary & Growth Strategy",
+        "key_points": bullets,
+        "narrative": narrative,
+    }
+

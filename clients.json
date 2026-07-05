@@ -1,0 +1,17 @@
+{
+  "_comment": "Multi-client registry. Add one entry per client. Set use_demo_data=true for local testing without credentials.",
+  "clients": {
+    "🎯 Demo — BuildMart (Sample Data)": {
+      "use_demo_data": true,
+      "ga4_property_id": "",
+      "gsc_site_url": "",
+      "organic_only": true
+    },
+    "Ultratech Cement": {
+      "use_demo_data": false,
+      "ga4_property_id": "342904846",
+      "gsc_site_url": "https://www.ultratechcement.com/",
+      "organic_only": true
+    }
+  }
+}

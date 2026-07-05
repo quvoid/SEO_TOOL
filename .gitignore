@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+env/
+venv/
+
+# Streamlit secrets — NEVER commit real secrets
+.streamlit/secrets.toml
+
+# Environment files
+.env
+*.env.local
+
+# Google credentials
+service_account.json
+*service_account*.json
+*credentials*.json
+google-ads.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+
+# Downloaded Client Reports
+*.html
+!secrets.toml.example
+
