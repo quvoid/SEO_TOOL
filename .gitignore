@@ -38,5 +38,7 @@ Thumbs.db
 # Cache and local databases
 api_cache.db
 *.db
+ab_tests.json
+
 
 

@@ -321,7 +321,7 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=1800, show_spinner=False)   # 30-min cache per client+window
+@st.cache_data(ttl=300, show_spinner=False)   # 5-min cache per client+window
 def load_data(client_name: str, client_cfg_frozen: str, days: int) -> dict:
     """
     Load all data for a given client. Results are cached for 30 minutes to
@@ -340,8 +340,12 @@ def load_data(client_name: str, client_cfg_frozen: str, days: int) -> dict:
             "ga4_totals": {"current_total": demo_sum, "prev_total": demo_prev},
             "gsc": demo_data.gsc_page_metrics(),
             "gsc_queries": demo_data.gsc_top_queries_flat(),
+            "gsc_queries_prev": demo_data.gsc_top_queries_flat_prev(),
+            "gsc_pairs": demo_data.gsc_query_page_pairs(),
             "clarity": demo_data.clarity_insights(),
-            "funnel": demo_data.funnel_steps(),
+            "funnel": demo_data.funnel_steps_by_device(),
+            "indexation": demo_data.indexation_summary(),
+            "crux": demo_data.crux_metrics(),
             "site": demo_data.SITE_URL,
             "is_demo": True,
         }
@@ -373,10 +377,23 @@ def load_data(client_name: str, client_cfg_frozen: str, days: int) -> dict:
         errors.append(f"GSC page error: {exc}")
 
     gsc_queries = []
+    gsc_queries_prev = []
     try:
-        gsc_queries = connectors.fetch_gsc_queries_flat(site, sa, days, top_n=50)
+        gsc_queries, gsc_queries_prev = connectors.fetch_gsc_queries_with_prev(site, sa, days, top_n=200)
     except Exception as exc:
         errors.append(f"GSC queries error: {exc}")
+
+    gsc_pairs = []
+    try:
+        gsc_pairs = connectors.fetch_gsc_query_page_pairs(site, sa, days, top_n=2000)
+    except Exception as exc:
+        errors.append(f"GSC query-page pairs error: {exc}")
+
+    indexation = {"submitted_urls": 0, "indexed_urls": 0, "indexation_rate": 0.0, "sitemaps": []}
+    try:
+        indexation = connectors.fetch_gsc_indexation_summary(site, sa)
+    except Exception as exc:
+        errors.append(f"GSC Indexation summary error: {exc}")
 
     clarity = []  # Clarity is optional; no error if not configured
     clarity_token = config._s("clarity.api_token")
@@ -391,8 +408,11 @@ def load_data(client_name: str, client_cfg_frozen: str, days: int) -> dict:
         "ga4_totals": ga4_totals,
         "gsc": gsc,
         "gsc_queries": gsc_queries,
+        "gsc_queries_prev": gsc_queries_prev,
+        "gsc_pairs": gsc_pairs,
         "clarity": clarity,
-        "funnel": demo_data.funnel_steps(),   # replace with live funnel query when ready
+        "funnel": demo_data.funnel_steps_by_device(),   # Replace with live device funnel queries when ready
+        "indexation": indexation,
         "site": site,
         "is_demo": False,
         "errors": errors,
@@ -417,10 +437,11 @@ def run_report(client_name: str, client_cfg: dict, days: int, model: str) -> dic
         )
         return None
 
-    # Fetch PageSpeed metrics for top declining pages
+    # Fetch PageSpeed & CrUX metrics for top declining pages
     pagespeed_data = {}
+    crux_data = {}
     if data.get("is_demo"):
-        for page in ["/for-homebuilders/home-building-explained-single/descriptive-articles/types-of-houses", "/house-construction-guide", "/home-loans"]:
+        for page in ["/roof-leakage-solutions", "/house-construction-guide", "/home-loans"]:
             pagespeed_data[page] = {
                 "url": page,
                 "performance_score": 45,
@@ -428,19 +449,22 @@ def run_report(client_name: str, client_cfg: dict, days: int, model: str) -> dic
                 "cls": 0.18,
                 "inp": 280
             }
+        crux_data = data["crux"]
     else:
         declining = sorted(
             [r for r in data["ga4"] if (r.get("sessions", 0) - r.get("prev_sessions", 0)) < 0],
             key=lambda r: (r.get("sessions", 0) - r.get("prev_sessions", 0))
-        )[:3]
+        )[:5]
         for r in declining:
             page_path = r["page_path"]
             # Construct absolute URL using GSC site URL prefix
             base_site = data["site"].rstrip("/")
             abs_url = base_site + ("/" if not page_path.startswith("/") else "") + page_path
-            with st.spinner(f"Fetching PageSpeed Insights for {page_path}…"):
+            with st.spinner(f"Fetching PageSpeed Insights & CrUX field data for {page_path}…"):
                 stats = connectors.fetch_pagespeed_metrics(abs_url, config.PAGESPEED_API_KEY)
                 pagespeed_data[page_path] = stats
+                crux_stats = connectors.fetch_crux_metrics(abs_url, config.PAGESPEED_API_KEY)
+                crux_data[page_path] = crux_stats
 
     results: dict = {}
     gk = config.GEMINI_KEY
@@ -471,19 +495,31 @@ def run_report(client_name: str, client_cfg: dict, days: int, model: str) -> dic
 
     with st.spinner("Module 6 — Keyword Intelligence…"):
         results["keywords"] = analysis.module_keyword_intelligence(
-            data["gsc_queries"], gk, model
+            data["gsc_queries"], gk, model, prev_queries=data["gsc_queries_prev"], site_url=data["site"]
+        )
+    time.sleep(6)
+
+    with st.spinner("Module 6b — Keyword Cannibalization…"):
+        results["cannibalization"] = analysis.module_cannibalization(
+            data["gsc_pairs"], gk, model
         )
     time.sleep(6)
 
     with st.spinner("Module 7 — Declining Pages UX & Speed Audit…"):
         results["ux_audit"] = analysis.module_ux_audit(
-            data["ga4"], data["gsc"], data["clarity"], pagespeed_data, gk, model
+            data["ga4"], data["gsc"], data["clarity"], pagespeed_data, gk, model, crux_data=crux_data
         )
     time.sleep(6)
 
     with st.spinner("Module 8 — Hidden Growth Insights…"):
         results["hidden_insights"] = analysis.module_hidden_insights(
             data["ga4"], data["gsc"], data["clarity"], gk, model
+        )
+    time.sleep(6)
+
+    with st.spinner("Module 9 — Indexation Health…"):
+        results["indexation"] = analysis.module_indexation_health(
+            data["indexation"], gk, model
         )
     time.sleep(6)
 

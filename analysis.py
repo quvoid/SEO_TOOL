@@ -93,6 +93,21 @@ def _normalize_page(p: str) -> str:
     return p.split("?")[0].rstrip("/") or "/"
 
 
+def _detect_brand_terms(site_url: str) -> list[str]:
+    """Auto-detect brand terms from the domain name of site_url."""
+    try:
+        url = site_url if "://" in site_url else "https://" + site_url
+        domain = url.split("://", 1)[1].split("/")[0].replace("www.", "")
+        brand_raw = domain.split(".")[0].lower()
+        terms = [brand_raw]
+        # If compound domain (>12 chars), add shorter prefix heuristic
+        if len(brand_raw) > 12:
+            terms.append(brand_raw[:8])
+        return [t for t in terms if t]
+    except Exception:
+        return []
+
+
 # ===========================================================================
 # Module 1 — Organic Performance Intelligence
 # ===========================================================================
@@ -221,37 +236,74 @@ def module_user_journey(ga4_rows, clarity_rows, api_key, model):
 
 
 # ===========================================================================
-# Module 3 — Funnel Drop-off
+# Module 3 — Funnel Drop-off (with device segmentation)
 # ===========================================================================
-def module_funnel(funnel, api_key, model):
-    steps = []
-    for i, s in enumerate(funnel):
-        prev = funnel[i - 1]["users"] if i else None
-        drop = (1 - s["users"] / prev) * 100 if prev else 0.0
-        steps.append({"step": s["step"], "users": s["users"], "drop_pct": drop})
+def module_funnel(funnel_data, api_key, model):
+    """
+    funnel_data: flat list OR dict {mobile:[...], desktop:[...], tablet:[...]}
+    When device-segmented, the analysis focuses on mobile vs desktop gap.
+    """
+    # Detect device-segmented format
+    if isinstance(funnel_data, dict) and "mobile" in funnel_data:
+        devices = funnel_data
+        flat = funnel_data.get("desktop", list(funnel_data.values())[0])
+    else:
+        devices = None
+        flat = funnel_data
 
-    biggest = (
-        max(steps[1:], key=lambda s: s["drop_pct"]) if len(steps) > 1 else None
-    )
+    def _compute_steps(funnel_list):
+        steps = []
+        for i, s in enumerate(funnel_list):
+            prev = funnel_list[i - 1]["users"] if i else None
+            drop = (1 - s["users"] / prev) * 100 if prev else 0.0
+            steps.append({"step": s["step"], "users": s["users"], "drop_pct": drop})
+        return steps
+
+    steps = _compute_steps(flat)
+    biggest = max(steps[1:], key=lambda s: s["drop_pct"]) if len(steps) > 1 else None
     overall = (steps[-1]["users"] / steps[0]["users"] * 100) if steps else 0.0
 
-    lines = "\n".join(
-        f"- {s['step']}: {s['users']} users"
-        + (f" ({s['drop_pct']:.0f}% drop from previous)" if s["drop_pct"] else "")
-        for s in steps
-    )
-    prompt = (
-        f"Conversion funnel:\n{lines}\n\n"
-        f"Overall completion: {overall:.1f}%. Biggest single drop: "
-        f"{biggest['step'] if biggest else 'n/a'} "
-        f"({biggest['drop_pct']:.0f}% if applicable).\n"
-        "Identify the biggest friction point and give a concrete fix plus a realistic "
-        "estimate of conversion lift if fixed."
-    )
+    # Compute per-device steps
+    device_steps = {}
+    if devices:
+        for device_name, device_funnel in devices.items():
+            device_steps[device_name] = _compute_steps(device_funnel)
+
+    # Build prompt
+    if device_steps:
+        mob = device_steps.get("mobile", [])
+        desk = device_steps.get("desktop", [])
+        mob_completion = (mob[-1]["users"] / mob[0]["users"] * 100) if mob and mob[0]["users"] else 0
+        desk_completion = (desk[-1]["users"] / desk[0]["users"] * 100) if desk and desk[0]["users"] else 0
+        mob_lines = " → ".join(f"{s['step']} ({s['users']}{'  ↓'+str(int(s['drop_pct']))+'%' if s['drop_pct'] else ''})" for s in mob)
+        desk_lines = " → ".join(f"{s['step']} ({s['users']}{'  ↓'+str(int(s['drop_pct']))+'%' if s['drop_pct'] else ''})" for s in desk)
+        prompt = (
+            f"Device-segmented conversion funnel:\n"
+            f"Mobile ({mob_completion:.1f}% completion): {mob_lines}\n"
+            f"Desktop ({desk_completion:.1f}% completion): {desk_lines}\n\n"
+            "Mobile drop-off is almost always worse than desktop — identify the exact step where "
+            "mobile loses the most relative to desktop, explain why (form friction, slow mobile load, "
+            "small tap targets, above-the-fold CTA hidden) and give one high-impact fix per device."
+        )
+    else:
+        lines = "\n".join(
+            f"- {s['step']}: {s['users']} users"
+            + (f" ({s['drop_pct']:.0f}% drop from previous)" if s["drop_pct"] else "")
+            for s in steps
+        )
+        prompt = (
+            f"Conversion funnel:\n{lines}\n\n"
+            f"Overall completion: {overall:.1f}%. Biggest single drop: "
+            f"{biggest['step'] if biggest else 'n/a'} "
+            f"({biggest['drop_pct']:.0f}% if applicable).\n"
+            "Identify the biggest friction point and give a concrete fix plus a realistic "
+            "estimate of conversion lift if fixed."
+        )
     narrative = reasoning(prompt, api_key, model)
     return {
         "title": "Module 3 — Funnel Drop-off",
         "steps": steps,
+        "device_steps": device_steps,
         "biggest_drop": biggest,
         "overall_completion_pct": overall,
         "narrative": narrative,
@@ -326,6 +378,8 @@ def module_keyword_intelligence(
     gsc_queries: list[dict],
     api_key: str | None,
     model: str,
+    prev_queries: list[dict] | None = None,
+    site_url: str | None = None,
 ) -> dict:
     """
     Analyzes GSC queries to find high-impression keywords ranking in
@@ -336,20 +390,30 @@ def module_keyword_intelligence(
       - Monthly impressions >= 100 (has traffic visibility)
       - Sorted by click uplift potential (impressions * target top-3 CTR - current clicks)
     """
-    ESTIMATED_CTR_TOP3 = 0.10     # estimated 10% average CTR for top 3
+    ESTIMATED_CTR_TOP3 = 0.10
     MIN_IMPRESSIONS = 100
-    OPP_POSITION_LOW = 4
-    OPP_POSITION_HIGH = 20
 
+    # ── Position Bands ──────────────────────────────────────────────────────
+    bands: dict[str, list] = {"1-3": [], "4-10": [], "11-20": [], "21-50": []}
+    for row in gsc_queries:
+        pos = row.get("position", 100)
+        if pos <= 3:
+            bands["1-3"].append(row)
+        elif pos <= 10:
+            bands["4-10"].append(row)
+        elif pos <= 20:
+            bands["11-20"].append(row)
+        elif pos <= 50:
+            bands["21-50"].append(row)
+
+    # ── Striking Distance Opportunities (pos 4-20) ──────────────────────────
     opportunities = []
-
     for row in gsc_queries:
         query = row.get("query", "")
         position = row.get("position", 100)
         current_clicks = row.get("clicks", 0)
         impressions = row.get("impressions", 0)
-
-        if impressions >= MIN_IMPRESSIONS and OPP_POSITION_LOW <= position <= OPP_POSITION_HIGH:
+        if impressions >= MIN_IMPRESSIONS and 4 <= position <= 20:
             potential_clicks = int(impressions * ESTIMATED_CTR_TOP3)
             click_uplift = max(0, potential_clicks - current_clicks)
             opportunities.append({
@@ -360,18 +424,53 @@ def module_keyword_intelligence(
                 "potential_clicks": potential_clicks,
                 "click_uplift": click_uplift,
             })
-
     opportunities.sort(key=lambda o: o["click_uplift"], reverse=True)
     top_opps = opportunities[:10]
 
+    # ── New vs Lost Queries WoW ─────────────────────────────────────────────
+    new_queries: list[dict] = []
+    lost_queries: list[dict] = []
+    if prev_queries is not None:
+        cur_set = {r["query"] for r in gsc_queries}
+        prev_set = {r["query"] for r in prev_queries}
+        cur_map = {r["query"]: r for r in gsc_queries}
+        prev_map = {r["query"]: r for r in prev_queries}
+        new_queries = sorted(
+            [cur_map[q] for q in (cur_set - prev_set)],
+            key=lambda r: r.get("impressions", 0), reverse=True
+        )[:20]
+        lost_queries = sorted(
+            [prev_map[q] for q in (prev_set - cur_set)],
+            key=lambda r: r.get("impressions", 0), reverse=True
+        )[:20]
+
+    # ── Brand vs Non-Brand Split ────────────────────────────────────────────
+    brand_terms = _detect_brand_terms(site_url) if site_url else []
+    brand_clicks = brand_imps = non_brand_clicks = non_brand_imps = 0
+    branded_queries: list[dict] = []
+    non_branded_queries: list[dict] = []
+    for row in gsc_queries:
+        q = row.get("query", "").lower()
+        is_brand = any(term in q for term in brand_terms) if brand_terms else False
+        if is_brand:
+            brand_clicks += row.get("clicks", 0)
+            brand_imps += row.get("impressions", 0)
+            branded_queries.append(row)
+        else:
+            non_brand_clicks += row.get("clicks", 0)
+            non_brand_imps += row.get("impressions", 0)
+            non_branded_queries.append(row)
+    total_clicks = brand_clicks + non_brand_clicks
+    brand_click_pct = round((brand_clicks / total_clicks * 100), 1) if total_clicks else 0.0
+
+    # ── AI Prompt ───────────────────────────────────────────────────────────
     if not top_opps:
-        lines = "- No keywords found in the position 4–20 range with significant impressions."
+        lines = "- No keywords found in position 4–20 range with significant impressions."
         prompt = (
             f"Keyword opportunity scan:\n{lines}\n\n"
             "Briefly note that the site either ranks very well already (top 3) or "
             "targets low-volume terms. Suggest next steps."
         )
-        narrative = reasoning(prompt, api_key, model)
     else:
         lines = "\n".join(
             f"- '{o['query']}': position {o['position']}, "
@@ -380,21 +479,30 @@ def module_keyword_intelligence(
             f"potential click uplift: +{o['click_uplift']:,}"
             for o in top_opps[:6]
         )
+        brand_note = f"\nBrand dependency: {brand_click_pct:.0f}% of all clicks are branded searches — non-branded discovery is {100-brand_click_pct:.0f}%." if brand_terms else ""
+        lost_note = f"\nLost {len(lost_queries)} queries vs prior period — possible ranking drops to investigate." if lost_queries else ""
         prompt = (
-            f"Keyword opportunity analysis — keywords the site ranks for but not in top 3:\n"
-            f"{lines}\n\n"
-            "For the top 3 opportunities by click uplift, explain: "
-            "(1) why this keyword is worth targeting based on its GSC impressions, "
-            "(2) the specific content or technical change needed to push it into top 3, "
-            "(3) realistic monthly click uplift and SEO timeline. "
-            "Order by ROI. Be specific about tactics."
+            f"Keyword opportunity analysis:\n{lines}\n{brand_note}{lost_note}\n\n"
+            "For the top 3 opportunities, explain: "
+            "(1) why this keyword is worth targeting, "
+            "(2) the specific on-page or technical change to push it into top 3, "
+            "(3) realistic monthly click uplift and SEO timeline. Order by ROI."
         )
-        narrative = reasoning(prompt, api_key, model)
+    narrative = reasoning(prompt, api_key, model)
 
     return {
         "title": "Module 6 — Keyword Intelligence",
         "opportunities": top_opps,
         "total_queries_analysed": len(gsc_queries),
+        "bands": bands,
+        "new_queries": new_queries,
+        "lost_queries": lost_queries,
+        "brand_clicks": brand_clicks,
+        "non_brand_clicks": non_brand_clicks,
+        "brand_impressions": brand_imps,
+        "non_brand_impressions": non_brand_imps,
+        "brand_click_pct": brand_click_pct,
+        "brand_terms": brand_terms,
         "narrative": narrative,
     }
 
@@ -402,7 +510,7 @@ def module_keyword_intelligence(
 # ===========================================================================
 # Module 7 — Declining Pages UX Audit (GSC × Clarity × PageSpeed)
 # ===========================================================================
-def module_ux_audit(ga4_rows, gsc_rows, clarity_rows, pagespeed_data, api_key, model):
+def module_ux_audit(ga4_rows, gsc_rows, clarity_rows, pagespeed_data, api_key, model, crux_data=None):
     gsc_by_page = {_normalize_page(r["page"]): r for r in gsc_rows}
     clarity_by_page = {_normalize_page(c["url"]): c for c in clarity_rows}
 
@@ -433,11 +541,17 @@ def module_ux_audit(ga4_rows, gsc_rows, clarity_rows, pagespeed_data, api_key, m
         elif dead > 20 or rage > 3 or (score is not None and score < 70):
             risk = "⚠️ Medium UX Risk"
 
+        # CrUX real-user field data (separate from PSI lab scores)
+        crux = (crux_data or {}).get(norm_path, {})
+        conversion_rate = round(r.get("conversions", 0) / r["sessions"] * 100, 2) if r.get("sessions") else 0.0
+
         audit_rows.append({
             "page": r["page_path"],
             "session_change": session_delta,
             "session_change_pct": session_delta_pct,
             "sessions": r["sessions"],
+            "conversions": r.get("conversions", 0),
+            "conversion_rate": conversion_rate,
             "avg_position": g.get("position"),
             "dead_clicks": dead,
             "rage_clicks": rage,
@@ -446,6 +560,10 @@ def module_ux_audit(ga4_rows, gsc_rows, clarity_rows, pagespeed_data, api_key, m
             "lcp": ps.get("lcp"),
             "cls": ps.get("cls"),
             "inp": ps.get("inp"),
+            "crux_lcp": crux.get("lcp_p75"),
+            "crux_cls": crux.get("cls_p75"),
+            "crux_inp": crux.get("inp_p75"),
+            "crux_rating": crux.get("rating"),
             "risk_level": risk
         })
 
@@ -670,3 +788,113 @@ def module_executive_summary(results: dict, api_key: str | None, model: str) -> 
         "narrative": narrative,
     }
 
+
+
+# ===========================================================================
+# Module 6b — Keyword Cannibalization Detector
+# ===========================================================================
+def module_cannibalization(gsc_pairs: list[dict], api_key: str | None, model: str) -> dict:
+    """
+    Detect keyword cannibalization: queries where 2+ different pages compete.
+    Input: gsc_pairs — list of {query, page, clicks, impressions, position}.
+    """
+    from collections import defaultdict
+    query_pages: dict = defaultdict(list)
+    for row in gsc_pairs:
+        query_pages[row["query"]].append(row)
+
+    conflicts = []
+    for query, pages in query_pages.items():
+        if len(pages) >= 2:
+            pages_sorted = sorted(pages, key=lambda p: p.get("clicks", 0), reverse=True)
+            total_clicks = sum(p.get("clicks", 0) for p in pages_sorted)
+            total_impressions = sum(p.get("impressions", 0) for p in pages_sorted)
+            top_share = (pages_sorted[0].get("clicks", 0) / total_clicks * 100) if total_clicks else 0
+            severity = "🔴 High" if len(pages_sorted) >= 3 or top_share < 60 else "🟡 Medium"
+            conflicts.append({
+                "query": query,
+                "competing_pages": pages_sorted,
+                "num_pages": len(pages_sorted),
+                "total_clicks": total_clicks,
+                "total_impressions": total_impressions,
+                "winner": pages_sorted[0].get("page", ""),
+                "winner_click_share": round(top_share, 1),
+                "severity": severity,
+            })
+
+    conflicts.sort(key=lambda c: c["total_impressions"], reverse=True)
+    top_conflicts = conflicts[:10]
+
+    if not top_conflicts:
+        prompt = (
+            "No keyword cannibalization detected across GSC query-page pairs. "
+            "The site has clean URL-to-topic mapping. Confirm this is healthy and "
+            "suggest one proactive check to maintain it long-term."
+        )
+    else:
+        lines = "\n".join(
+            f"- '{c['query']}': {c['num_pages']} pages competing, {c['total_impressions']:,} impressions, "
+            f"winner '{c['winner']}' has {c['winner_click_share']:.0f}% of clicks, severity: {c['severity']}"
+            for c in top_conflicts[:5]
+        )
+        prompt = (
+            f"Keyword cannibalization detected — multiple pages competing for the same queries:\n{lines}\n\n"
+            "For the top 3 conflicts: (1) which URL should own this keyword and why, "
+            "(2) what to do with the losing pages (301 redirect, content consolidation, "
+            "noindex, or internal link update), (3) expected ranking improvement after fixing. "
+            "Be direct and specific."
+        )
+    narrative = reasoning(prompt, api_key, model)
+    return {
+        "title": "Module 6b — Keyword Cannibalization",
+        "conflicts": top_conflicts,
+        "narrative": narrative,
+    }
+
+
+# ===========================================================================
+# Module 9 — Indexation Health
+# ===========================================================================
+def module_indexation_health(indexation_data: dict, api_key: str | None, model: str) -> dict:
+    """
+    Analyse sitemap indexation health from GSC Sitemaps API data.
+    """
+    submitted = indexation_data.get("submitted_urls", 0)
+    indexed = indexation_data.get("indexed_urls", 0)
+    rate = indexation_data.get("indexation_rate", 0.0)
+    crawled_not_indexed = indexation_data.get("crawled_not_indexed", 0)
+    discovered_not_indexed = indexation_data.get("discovered_not_indexed", 0)
+    sitemaps = indexation_data.get("sitemaps", [])
+    unindexed = submitted - indexed
+
+    sm_lines = "\n".join(
+        f"  - {s['path']}: submitted {s['submitted']:,}, indexed {s['indexed']:,} "
+        f"({int(s['indexed']/s['submitted']*100) if s['submitted'] else 0}%)"
+        for s in sitemaps
+    ) or "  - No sitemaps found"
+
+    prompt = (
+        f"Indexation health summary for the site:\n"
+        f"- Total URLs submitted in sitemaps: {submitted:,}\n"
+        f"- Total indexed by Google: {indexed:,} ({rate:.1f}% rate)\n"
+        f"- Unindexed from sitemaps: {unindexed:,}\n"
+        f"- Crawled but not indexed: {crawled_not_indexed:,}\n"
+        f"- Discovered but not indexed: {discovered_not_indexed:,}\n"
+        f"Sitemap breakdown:\n{sm_lines}\n\n"
+        "Diagnose the indexation health. If the indexation rate is below 85%, explain the most likely "
+        "causes (thin content, duplicate pages, soft 404s, crawl budget issues, orphaned pages) and "
+        "give 3 specific, prioritized technical fixes. Flag if crawled-not-indexed is disproportionately high."
+    )
+    narrative = reasoning(prompt, api_key, model)
+
+    return {
+        "title": "Module 9 — Indexation & Technical Health",
+        "submitted_urls": submitted,
+        "indexed_urls": indexed,
+        "unindexed_urls": unindexed,
+        "indexation_rate": rate,
+        "crawled_not_indexed": crawled_not_indexed,
+        "discovered_not_indexed": discovered_not_indexed,
+        "sitemaps": sitemaps,
+        "narrative": narrative,
+    }
