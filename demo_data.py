@@ -116,6 +116,7 @@ def funnel_steps():
     ]
 
 
+
 def date_range():
     end = date(2026, 6, 24)
     start = end - timedelta(days=29)
@@ -138,6 +139,124 @@ def gsc_top_queries_flat():
         {"query": "home construction loan india", "clicks": 210, "impressions": 8000, "ctr": 0.026, "position": 6.2},
         {"query": "waterproofing solution for terrace", "clicks": 130, "impressions": 11000, "ctr": 0.012, "position": 14.3},
         {"query": "roof waterproofing cost per sqft", "clicks": 110, "impressions": 7500, "ctr": 0.015, "position": 11.8},
+        {"query": "cement plaster wall guide", "clicks": 95, "impressions": 6200, "ctr": 0.015, "position": 18.4},
+        {"query": "ultratech cement price list", "clicks": 870, "impressions": 21000, "ctr": 0.041, "position": 2.1},
+        {"query": "ultratech cement dealers", "clicks": 520, "impressions": 14000, "ctr": 0.037, "position": 2.8},
+        {"query": "ultratech premium cement", "clicks": 310, "impressions": 9500, "ctr": 0.033, "position": 3.2},
+        {"query": "load bearing wall construction", "clicks": 88, "impressions": 5400, "ctr": 0.016, "position": 22.3},
+        {"query": "earthquake resistant house design", "clicks": 72, "impressions": 4800, "ctr": 0.015, "position": 31.5},
     ]
 
 
+# ---------------------------------------------------------------------------
+# Previous period flat queries (for new/lost query WoW diff — Module 6)
+# ---------------------------------------------------------------------------
+def gsc_top_queries_flat_prev():
+    """Previous period queries — some match current, some are lost, some are new in current."""
+    return [
+        {"query": "roof leakage solution", "clicks": 980, "impressions": 32000, "ctr": 0.031, "position": 3.8},
+        {"query": "how to stop roof leakage", "clicks": 700, "impressions": 30000, "ctr": 0.023, "position": 4.2},
+        {"query": "best cement brand india", "clicks": 550, "impressions": 42000, "ctr": 0.013, "position": 8.8},
+        {"query": "house construction guide", "clicks": 370, "impressions": 24000, "ctr": 0.015, "position": 7.9},
+        {"query": "cement plaster mix ratio", "clicks": 250, "impressions": 18000, "ctr": 0.014, "position": 6.5},
+        {"query": "terrace waterproofing tips", "clicks": 180, "impressions": 9500, "ctr": 0.019, "position": 7.2},
+        {"query": "home construction loan india", "clicks": 200, "impressions": 8000, "ctr": 0.025, "position": 6.5},
+        {"query": "foundation repair cost", "clicks": 190, "impressions": 9500, "ctr": 0.020, "position": 9.1},
+        {"query": "ultratech cement price list", "clicks": 790, "impressions": 19000, "ctr": 0.042, "position": 2.4},
+        {"query": "ultratech cement dealers", "clicks": 460, "impressions": 12500, "ctr": 0.037, "position": 3.1},
+        {"query": "building construction steps india", "clicks": 140, "impressions": 7200, "ctr": 0.019, "position": 11.3},
+        {"query": "site leveling cost per sqft", "clicks": 95, "impressions": 4100, "ctr": 0.023, "position": 16.8},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# GSC Query + Page pairs (for Keyword Cannibalization — Module 6b)
+# ---------------------------------------------------------------------------
+def gsc_query_page_pairs():
+    """GSC query+page dimension pairs — includes deliberate cannibalization examples."""
+    return [
+        {"query": "best cement brand india", "page": "/best-cement-guide", "clicks": 320, "impressions": 14000, "position": 5.2},
+        {"query": "best cement brand india", "page": "/house-construction-guide", "clicks": 180, "impressions": 9000, "position": 8.7},
+        {"query": "best cement brand india", "page": "/foundation-info", "clicks": 60, "impressions": 4000, "position": 14.2},
+        {"query": "roof leakage solution", "page": "/roof-leakage-solutions", "clicks": 900, "impressions": 30000, "position": 4.0},
+        {"query": "waterproofing cost india", "page": "/waterproofing-cost-calculator", "clicks": 290, "impressions": 12000, "position": 3.8},
+        {"query": "waterproofing cost india", "page": "/roof-leakage-solutions", "clicks": 95, "impressions": 5000, "position": 9.1},
+        {"query": "house construction guide", "page": "/house-construction-guide", "clicks": 210, "impressions": 12000, "position": 6.0},
+        {"query": "house construction guide", "page": "/best-cement-guide", "clicks": 70, "impressions": 6000, "position": 11.3},
+        {"query": "home loans india", "page": "/home-loans", "clicks": 420, "impressions": 15000, "position": 5.5},
+        {"query": "foundation cost calculator", "page": "/waterproofing-cost-calculator", "clicks": 110, "impressions": 4500, "position": 8.9},
+        {"query": "foundation cost calculator", "page": "/foundation-info", "clicks": 55, "impressions": 3200, "position": 12.4},
+        {"query": "ultratech cement price list", "page": "/best-cement-guide", "clicks": 870, "impressions": 21000, "position": 2.1},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Indexation Health (Module 9)
+# ---------------------------------------------------------------------------
+def indexation_summary():
+    """Demo indexation health data from GSC Sitemaps API."""
+    return {
+        "submitted_urls": 1240,
+        "indexed_urls": 980,
+        "crawled_not_indexed": 142,
+        "discovered_not_indexed": 88,
+        "indexation_rate": 79.0,
+        "sitemaps": [
+            {"path": "/sitemap.xml", "submitted": 850, "indexed": 720},
+            {"path": "/sitemap-blog.xml", "submitted": 390, "indexed": 260},
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# CrUX Field Data (for Module 7 — Real-user Core Web Vitals)
+# ---------------------------------------------------------------------------
+def crux_metrics():
+    """Demo CrUX (Chrome User Experience Report) p75 field data per URL path."""
+    return {
+        "/roof-leakage-solutions": {
+            "lcp_p75": 5.2, "cls_p75": 0.28, "inp_p75": 420, "fcp_p75": 3.1, "rating": "poor",
+        },
+        "/home-loans": {
+            "lcp_p75": 2.8, "cls_p75": 0.05, "inp_p75": 180, "fcp_p75": 1.8, "rating": "needs_improvement",
+        },
+        "/best-cement-guide": {
+            "lcp_p75": 2.1, "cls_p75": 0.02, "inp_p75": 140, "fcp_p75": 1.4, "rating": "good",
+        },
+        "/house-construction-guide": {
+            "lcp_p75": 4.8, "cls_p75": 0.22, "inp_p75": 380, "fcp_p75": 2.9, "rating": "poor",
+        },
+        "/foundation-info": {
+            "lcp_p75": 3.2, "cls_p75": 0.09, "inp_p75": 220, "fcp_p75": 2.1, "rating": "needs_improvement",
+        },
+        "/waterproofing-cost-calculator": {
+            "lcp_p75": 1.9, "cls_p75": 0.01, "inp_p75": 120, "fcp_p75": 1.2, "rating": "good",
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Device-segmented funnel (for Module 3)
+# ---------------------------------------------------------------------------
+def funnel_steps_by_device():
+    """Device-segmented funnel — mobile vs desktop vs tablet."""
+    return {
+        "mobile": [
+            {"step": "Landing page", "users": 580},
+            {"step": "Used cost calculator", "users": 194},
+            {"step": "Reached lead form", "users": 62},
+            {"step": "Submitted form", "users": 8},
+        ],
+        "desktop": [
+            {"step": "Landing page", "users": 340},
+            {"step": "Used cost calculator", "users": 242},
+            {"step": "Reached lead form", "users": 116},
+            {"step": "Submitted form", "users": 27},
+        ],
+        "tablet": [
+            {"step": "Landing page", "users": 80},
+            {"step": "Used cost calculator", "users": 44},
+            {"step": "Reached lead form", "users": 12},
+            {"step": "Submitted form", "users": 3},
+        ],
+    }

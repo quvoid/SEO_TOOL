@@ -613,3 +613,123 @@ def fetch_jina_markdown(url: str) -> str:
             return cached
         return f"Failed to fetch content from Jina Reader: {exc}"
 
+
+
+# ---------------------------------------------------------------------------
+# GSC Query + Page Pairs — for Keyword Cannibalization (Module 6b)
+# ---------------------------------------------------------------------------
+def fetch_gsc_query_page_pairs(
+    site_url: str,
+    service_account_info: dict,
+    days: int = 30,
+    top_n: int = 2000,
+) -> list[dict]:
+    """Fetch GSC data with both query AND page dimensions for cannibalization detection."""
+    cache_key = f"gsc_query_page_pairs_{site_url}_{days}"
+    try:
+        from googleapiclient.discovery import build
+        creds = _ga4_gsc_credentials(service_account_info, ["https://www.googleapis.com/auth/webmasters.readonly"])
+        service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+        (cur_s, cur_e), _ = _period_dates(days)
+        body = {"startDate": cur_s.isoformat(), "endDate": cur_e.isoformat(), "dimensions": ["query", "page"], "rowLimit": top_n}
+        resp = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
+        rows = [{"query": r["keys"][0], "page": r["keys"][1], "clicks": r.get("clicks",0), "impressions": r.get("impressions",0), "ctr": r.get("ctr",0.0), "position": r.get("position",0.0)} for r in resp.get("rows", [])]
+        set_cached_value(cache_key, rows)
+        return rows
+    except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+        raise exc
+
+
+# ---------------------------------------------------------------------------
+# GSC Queries with Previous Period — for New vs Lost Query WoW (Module 6)
+# ---------------------------------------------------------------------------
+def fetch_gsc_queries_with_prev(site_url: str, service_account_info: dict, days: int = 30, top_n: int = 200) -> tuple:
+    """Returns (current_queries, prev_queries) for new/lost query WoW diff."""
+    cache_key = f"gsc_queries_with_prev_{site_url}_{days}_{top_n}"
+    try:
+        from googleapiclient.discovery import build
+        creds = _ga4_gsc_credentials(service_account_info, ["https://www.googleapis.com/auth/webmasters.readonly"])
+        service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+        (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days)
+        def _run(start, end):
+            body = {"startDate": start.isoformat(), "endDate": end.isoformat(), "dimensions": ["query"], "rowLimit": top_n, "orderBy": [{"fieldName": "clicks", "sortOrder": "DESCENDING"}]}
+            resp = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
+            return [{"query": r["keys"][0], "clicks": r.get("clicks",0), "impressions": r.get("impressions",0), "ctr": r.get("ctr",0.0), "position": r.get("position",0.0)} for r in resp.get("rows", [])]
+        cur = _run(cur_s, cur_e)
+        prev = _run(prev_s, prev_e)
+        set_cached_value(cache_key, {"current": cur, "prev": prev})
+        return cur, prev
+    except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached.get("current", []), cached.get("prev", [])
+        raise exc
+
+
+# ---------------------------------------------------------------------------
+# GSC Sitemaps API — Indexation Health (Module 9)
+# ---------------------------------------------------------------------------
+def fetch_gsc_indexation_summary(site_url: str, service_account_info: dict) -> dict:
+    """Fetch sitemap indexation data from Search Console Sitemaps API."""
+    cache_key = f"gsc_indexation_{site_url}"
+    try:
+        from googleapiclient.discovery import build
+        creds = _ga4_gsc_credentials(service_account_info, ["https://www.googleapis.com/auth/webmasters.readonly"])
+        service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+        resp = service.sitemaps().list(siteUrl=site_url).execute()
+        sitemaps, total_submitted, total_indexed = [], 0, 0
+        for sm in resp.get("sitemap", []):
+            submitted, indexed = 0, 0
+            for cnt in sm.get("contents", []):
+                submitted += int(cnt.get("submitted", 0))
+                indexed += int(cnt.get("indexed", 0))
+            sitemaps.append({"path": sm.get("path",""), "submitted": submitted, "indexed": indexed})
+            total_submitted += submitted
+            total_indexed += indexed
+        rate = (total_indexed / total_submitted * 100.0) if total_submitted else 0.0
+        result = {"submitted_urls": total_submitted, "indexed_urls": total_indexed, "indexation_rate": round(rate,1), "sitemaps": sitemaps, "crawled_not_indexed": 0, "discovered_not_indexed": 0}
+        set_cached_value(cache_key, result)
+        return result
+    except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+        raise exc
+
+
+# ---------------------------------------------------------------------------
+# CrUX API — Real-user Core Web Vitals Field Data (Module 7 Enhancement)
+# ---------------------------------------------------------------------------
+def fetch_crux_metrics(url: str, api_key: str | None = None) -> dict:
+    """Fetch Chrome UX Report p75 field data. Returns {} if URL not in CrUX dataset."""
+    cache_key = f"crux_{url}"
+    try:
+        import requests
+        endpoint = "https://chromeuxreport.googleapis.com/v1/records:queryRecord"
+        params = {"key": api_key} if api_key else {}
+        payload = {"url": url, "formFactor": "PHONE", "metrics": ["largest_contentful_paint","cumulative_layout_shift","interaction_to_next_paint","first_contentful_paint"]}
+        resp = requests.post(endpoint, json=payload, params=params, timeout=30)
+        if resp.status_code == 404:
+            return {}
+        resp.raise_for_status()
+        metrics = resp.json().get("record", {}).get("metrics", {})
+        def _p75(n): return metrics.get(n, {}).get("percentiles", {}).get("p75")
+        lcp_ms = _p75("largest_contentful_paint")
+        cls_v = _p75("cumulative_layout_shift")
+        inp_ms = _p75("interaction_to_next_paint")
+        fcp_ms = _p75("first_contentful_paint")
+        lcp_s = round(lcp_ms/1000.0, 2) if lcp_ms else None
+        fcp_s = round(fcp_ms/1000.0, 2) if fcp_ms else None
+        poor = (lcp_s and lcp_s > 4.0) or (cls_v and cls_v > 0.25) or (inp_ms and inp_ms > 500)
+        needs = (lcp_s and lcp_s > 2.5) or (cls_v and cls_v > 0.1) or (inp_ms and inp_ms > 200)
+        result = {"lcp_p75": lcp_s, "cls_p75": cls_v, "inp_p75": inp_ms, "fcp_p75": fcp_s, "rating": "poor" if poor else ("needs_improvement" if needs else "good")}
+        set_cached_value(cache_key, result)
+        return result
+    except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+        return {}
