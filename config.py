@@ -37,6 +37,9 @@ def _s(path: str, default=None):
 # ---------------------------------------------------------------------------
 GEMINI_KEY: str | None = _s("gemini.api_key")
 
+# xAI Grok — used for AI Strategic Analysis (Module 7 UX deep-dives, on-page SEO)
+GROK_KEY: str | None = _s("xai.api_key")
+
 # ---------------------------------------------------------------------------
 # Google OAuth — employee login
 # ---------------------------------------------------------------------------

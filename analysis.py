@@ -25,6 +25,9 @@ DEFAULT_MODEL = "gemini-2.5-flash"
 # ===========================================================================
 # AI reasoning layer
 # ===========================================================================
+import time as _time
+
+
 def reasoning(
     prompt: str,
     api_key: str | None,
@@ -32,46 +35,110 @@ def reasoning(
     system: str | None = None,
     max_tokens: int = 700,
 ) -> str:
-    """Call Gemini to narrate findings. Falls back gracefully if no key."""
+    """Call Gemini to narrate findings. Falls back gracefully if no key.
+    Retries with exponential backoff on quota/rate-limit errors."""
     if not api_key:
         return (
             "_[AI narrative disabled — add a Gemini API key in secrets.toml "
             "to generate written analysis. All tables and charts above are real "
             "computed findings.]_"
         )
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
 
-        model_name = model
-        # Map any legacy Claude model names to Gemini
-        if "claude" in model_name:
-            model_name = "gemini-2.5-flash"
+    sys = system or (
+        "You are a senior SEO and CRO analyst writing for a digital agency. "
+        "Be concise, specific and actionable. Reference the exact numbers given. "
+        "Output 2-4 short paragraphs or tight bullets. No preamble, no fluff. "
+        "End with a clearly labelled 'Recommendation:' line."
+    )
 
-        sys = system or (
-            "You are a senior SEO and CRO analyst writing for a digital agency. "
-            "Be concise, specific and actionable. Reference the exact numbers given. "
-            "Output 2-4 short paragraphs or tight bullets. No preamble, no fluff. "
-            "End with a clearly labelled 'Recommendation:' line."
-        )
+    import google.generativeai as genai
+    model_name = model
+    if "claude" in model_name or "grok" in model_name:
+        model_name = "gemini-2.5-flash"
 
-        config = genai.types.GenerationConfig(
-            max_output_tokens=max_tokens,
-            temperature=0.2,
-        )
+    genai.configure(api_key=api_key)
+    config_gen = genai.types.GenerationConfig(max_output_tokens=max_tokens, temperature=0.2)
+    gemini_model = genai.GenerativeModel(model_name=model_name, system_instruction=sys)
 
-        gemini_model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=sys,
-        )
+    max_attempts, base_wait = 4, 8
+    for attempt in range(max_attempts):
+        try:
+            response = gemini_model.generate_content(prompt, generation_config=config_gen)
+            return response.text
+        except Exception as exc:
+            msg = str(exc).lower()
+            is_quota = any(k in msg for k in ("quota", "rate", "429", "resource_exhausted", "exhausted"))
+            if is_quota and attempt < max_attempts - 1:
+                wait = base_wait * (2 ** attempt)  # 8s, 16s, 32s
+                _time.sleep(wait)
+                continue
+            return (
+                f"_[AI narrative unavailable: {exc}. "
+                "Structured findings above are still valid.]_"
+            )
+    return "_[AI narrative unavailable: max retries exceeded.]_"
 
-        response = gemini_model.generate_content(prompt, generation_config=config)
-        return response.text
-    except Exception as exc:
-        return (
-            f"_[AI narrative unavailable: {exc}. "
-            "Structured findings above are still valid.]_"
-        )
+
+def grok_reasoning(
+    prompt: str,
+    api_key: str | None,
+    system: str | None = None,
+    max_tokens: int = 1200,
+) -> str:
+    """Call xAI Grok for deep AI Strategic Analysis. Falls back to placeholder if no key.
+    Grok is used for: Module 7 UX deep-dive, Executive Summary, On-Page SEO Blueprint.
+    Uses the OpenAI-compatible xAI endpoint."""
+    if not api_key:
+        return "_[Grok AI analysis disabled — add xai.api_key in secrets.toml for strategic insights.]_"
+
+    sys = system or (
+        "You are a world-class SEO strategist and digital growth consultant. "
+        "You write precise, insightful, boardroom-ready analysis that connects data to business outcomes. "
+        "Be specific — cite exact metrics. Use clear structure with headers/bullets. "
+        "Never hedge. Be directive. End every section with a concrete, prioritised action."
+    )
+
+    max_attempts, base_wait = 4, 10
+    for attempt in range(max_attempts):
+        try:
+            import requests
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": "grok-3-mini",
+                "messages": [
+                    {"role": "system", "content": sys},
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": max_tokens,
+                "temperature": 0.3,
+            }
+            resp = requests.post(
+                "https://api.x.ai/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=90,
+            )
+            if resp.status_code == 429:
+                if attempt < max_attempts - 1:
+                    _time.sleep(base_wait * (2 ** attempt))
+                    continue
+                return "_[Grok rate limit reached. Structured findings above are still valid.]_"
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+        except Exception as exc:
+            msg = str(exc).lower()
+            if ("429" in msg or "rate" in msg) and attempt < max_attempts - 1:
+                _time.sleep(base_wait * (2 ** attempt))
+                continue
+            return (
+                f"_[Grok strategic analysis unavailable: {exc}. "
+                "Structured findings above are still valid.]_"
+            )
+    return "_[Grok analysis unavailable: max retries exceeded.]_"
+
 
 
 def _pct(cur, prev):
@@ -510,7 +577,7 @@ def module_keyword_intelligence(
 # ===========================================================================
 # Module 7 — Declining Pages UX Audit (GSC × Clarity × PageSpeed)
 # ===========================================================================
-def module_ux_audit(ga4_rows, gsc_rows, clarity_rows, pagespeed_data, api_key, model, crux_data=None):
+def module_ux_audit(ga4_rows, gsc_rows, clarity_rows, pagespeed_data, api_key, model, crux_data=None, grok_key=None):
     gsc_by_page = {_normalize_page(r["page"]): r for r in gsc_rows}
     clarity_by_page = {_normalize_page(c["url"]): c for c in clarity_rows}
 
@@ -569,21 +636,38 @@ def module_ux_audit(ga4_rows, gsc_rows, clarity_rows, pagespeed_data, api_key, m
 
     lines = []
     for row in audit_rows:
+        crux_note = ""
+        if row.get("crux_lcp") is not None:
+            crux_note = f" | CrUX field LCP: {row['crux_lcp']:.2f}s (real-user, {row.get('crux_rating', 'n/a')})"
         lines.append(
-            f"- {row['page']}: change {row['session_change_pct']:+.0f}% (sessions: {row['sessions']}), "
-            f"position {f'{row['avg_position']:.1f}' if row['avg_position'] is not None else 'n/a'}, "
-            f"PageSpeed {row['pagespeed_score'] if row['pagespeed_score'] is not None else 'n/a'}%, "
-            f"Dead/Rage Clicks: {row['dead_clicks']}/{row['rage_clicks']}, "
-            f"risk: {row['risk_level']}"
+            f"- {row['page']}: sessions {row['session_change_pct']:+.0f}% (now {row['sessions']}), "
+            f"avg GSC rank: {f"{row['avg_position']:.1f}" if row['avg_position'] is not None else 'n/a'}, "
+            f"Lab PageSpeed: {row['pagespeed_score'] if row['pagespeed_score'] is not None else 'n/a'}% | Lab LCP: {row['lcp'] if row['lcp'] is not None else 'n/a'}s"
+            f"{crux_note}, "
+            f"Dead/Rage Clicks: {row['dead_clicks']}/{row['rage_clicks']}, Risk: {row['risk_level']}"
         )
+
     prompt = (
-        "These top declining pages show a combination of search rank, user experience, and page speed performance metrics:\n"
+        "You are conducting a deep UX & SEO audit on these top declining pages. "
+        "You have BOTH Google PageSpeed Insights lab data AND Chrome UX Report (CrUX) real-user field data.\n\n"
+        "IMPORTANT: Lab scores measure controlled conditions. CrUX field data (p75) reflects REAL users — "
+        "this is what Google actually uses for Core Web Vitals rankings.\n\n"
+        "Declining pages:\n"
         + "\n".join(lines)
-        + "\n\nFor each declining page, diagnose the primary driver of the traffic drop: "
-        "is it Google algorithm rank decay, severe user experience friction (rage/dead clicks), or poor page speed (PageSpeed score & Core Web Vitals)? "
-        "Provide specific, actionable performance/speed or UX fixes."
+        + "\n\nFor EACH page, provide a structured diagnosis with:\n"
+        "**Primary Drop Driver** — Is it (a) Google algo rank decay, (b) UX friction (rage/dead clicks), "
+        "or (c) Core Web Vitals failure (CrUX field LCP > 2.5s / CLS > 0.1 / INP > 200ms)?\n"
+        "**3 Specific Fixes** — Prioritised by impact. For speed: exact image/script/render-blocking changes. "
+        "For UX: specific element/flow fixes based on dead/rage click patterns. For SEO: schema, title, intent alignment.\n"
+        "**Expected Recovery Timeline** — realistic estimate in weeks.\n\n"
+        "Be brutally specific. Name elements, not categories."
     )
-    narrative = reasoning(prompt, api_key, model)
+
+    # Use Grok for deep strategic analysis when available, fallback to Gemini
+    if grok_key:
+        narrative = grok_reasoning(prompt, grok_key, max_tokens=1400)
+    else:
+        narrative = reasoning(prompt, api_key, model, max_tokens=900)
 
     return {
         "title": "Module 7 — Declining Pages UX & Performance Audit",
@@ -690,49 +774,116 @@ def module_hidden_insights(ga4_rows, gsc_rows, clarity_rows, api_key, model):
 
 
 # ===========================================================================
-# Module 9 — Jina-Powered On-Page SEO Recommender (Helper Tool)
+# Module 9 — On-Page SEO Optimizer (Jina + GSC + PageSpeed + Grok)
 # ===========================================================================
-def module_onpage_seo(jina_markdown: str, gsc_queries: list, pagespeed_stats: dict, api_key: str | None, model: str) -> str:
-    """Uses scraped page markdown copy + GSC queries to generate a copywriting blueprint."""
+def module_onpage_seo(jina_markdown: str, gsc_queries: list, pagespeed_stats: dict, api_key: str | None, model: str, grok_key: str | None = None) -> str:
+    """Deep on-page SEO & copy optimization blueprint powered by Grok (with Gemini fallback)."""
     q_lines = "\n".join(
-        f"- {q['query']}: clicks {q['clicks']}, impressions {q['impressions']}, avg position {q['position']:.1f}"
-        for q in gsc_queries[:10]
-    ) or "- No search console queries found"
+        f"  {i+1}. [{q.get('position', '?'):.1f} avg rank] '{q['query']}' — "
+        f"{q.get('impressions', 0):,} impressions, {q.get('clicks', 0):,} clicks, "
+        f"CTR: {q.get('ctr', 0)*100:.2f}% "
+        f"({'🎯 Striking distance — optimize now' if 4 <= q.get('position', 100) <= 15 else ''})"
+        for i, q in enumerate(sorted(gsc_queries, key=lambda x: x.get('impressions', 0), reverse=True)[:15])
+    ) or "  - No Search Console queries found for this page."
 
     score = pagespeed_stats.get("performance_score")
     lcp = pagespeed_stats.get("lcp")
-    cls = pagespeed_stats.get("cls")
+    cls_v = pagespeed_stats.get("cls")
     inp = pagespeed_stats.get("inp")
+    fcp = pagespeed_stats.get("fcp")
 
-    prompt = (
-        "You are an elite SEO and Conversion Rate Optimization (CRO) copywriter.\n"
-        "We scraped the live text of a page using Jina Reader:\n"
-        "[START JINA MARKDOWN]\n"
-        f"{jina_markdown[:15000]}\n"  # Truncate to protect context window limits
-        "[END JINA MARKDOWN]\n\n"
-        "Here are the core search terms this page currently ranks for in Google Search Console:\n"
-        f"{q_lines}\n\n"
-        "Its mobile performance core web vitals are:\n"
-        f"- Performance Score: {score if score is not None else 'n/a'}%\n"
-        f"- Largest Contentful Paint (LCP): {f'{lcp}s' if lcp is not None else 'n/a'}\n"
-        f"- Cumulative Layout Shift (CLS): {cls if cls is not None else 'n/a'}\n"
-        f"- Interaction to Next Paint (INP): {f'{inp}ms' if inp is not None else 'n/a'}\n\n"
-        "Produce a detailed, structured, copy-paste-ready Optimization Blueprint:\n"
-        "1. Click-Optimized HTML Title Tag & Meta Description (within 60/160 character limits) containing the primary ranking keywords. "
-        "CRITICAL: Do NOT output raw unescaped HTML tags like <title> or <meta> directly in the markdown because the browser will hide them. "
-        "Either format them as plain text (e.g. 'Title Tag: Exploring Houses') or wrap them in escaped HTML code blocks (e.g. ````html ... ````).\n"
-        "2. Heading Restructuring: Suggest H1/H2 additions or updates to target semantic search query gaps.\n"
-        "3. Actionable Copy Additions: Draft the actual copy (paragraphs, lists, tables) to insert on the page to solve search intent better.\n"
-        "4. Page Speed & UX fixes: Map the Core Web Vitals issues (LCP/CLS/INP) to practical technical speed improvements.\n"
-        "Make it highly professional, clean, and ready for development. Output in clean Markdown."
-    )
-    return reasoning(prompt, api_key, model, max_tokens=1000)
+    # Word count of scraped content for context
+    word_count = len(jina_markdown.split()) if jina_markdown else 0
+    content_preview = jina_markdown[:18000]  # Give Grok the full page context up to limit
+
+    prompt = f"""You are a world-class SEO specialist and conversion copywriter conducting a professional on-page SEO audit.
+
+You have access to:
+1. The live scraped content of the page (via Jina Reader)
+2. Real search performance data from Google Search Console
+3. Core Web Vitals from Google PageSpeed Insights
+
+---
+## LIVE PAGE CONTENT (Jina Reader Scrape — {word_count:,} words)
+{content_preview}
+---
+
+## GOOGLE SEARCH CONSOLE — RANKING QUERIES FOR THIS PAGE
+{q_lines}
+
+## PAGESPEED INSIGHTS (Mobile)
+- Performance Score: {f'{score}%' if score is not None else 'n/a'}
+- LCP (Largest Contentful Paint): {f'{lcp}s' if lcp is not None else 'n/a'} {'🔴 POOR (>4s)' if lcp and lcp > 4 else '🟡 NEEDS WORK (>2.5s)' if lcp and lcp > 2.5 else '🟢 GOOD' if lcp else ''}
+- CLS (Cumulative Layout Shift): {cls_v if cls_v is not None else 'n/a'} {'🔴 POOR (>0.25)' if cls_v and cls_v > 0.25 else '🟡 NEEDS WORK (>0.1)' if cls_v and cls_v > 0.1 else '🟢 GOOD' if cls_v else ''}
+- INP (Interaction to Next Paint): {f'{inp}ms' if inp is not None else 'n/a'} {'🔴 POOR (>500ms)' if inp and inp > 500 else '🟡 NEEDS WORK (>200ms)' if inp and inp > 200 else '🟢 GOOD' if inp else ''}
+- FCP (First Contentful Paint): {f'{fcp}s' if fcp is not None else 'n/a'}
+
+---
+
+## YOUR TASK: Produce a Complete On-Page SEO Optimization Blueprint
+
+Based on the actual page content scraped above, generate a **copy-paste-ready professional optimization blueprint** with these exact sections:
+
+### 1. 🏷️ Title Tag & Meta Description (Priority: Critical)
+Write 3 optimized title tag variants (≤60 chars) and 2 meta description variants (≤160 chars). Include the top GSC query keyword naturally. Format as:
+```
+Title Option A: [your title here]
+Title Option B: [your title here]
+Title Option C: [your title here]
+
+Meta Option A: [your meta description here]
+Meta Option B: [your meta description here]
+```
+
+### 2. 🔍 Keyword Gap Analysis
+- Identify which GSC ranking queries are NOT covered in the current H1/H2 headings (based on the scraped content)
+- Flag 3–5 semantic keyword gaps the page should target based on ranking intent
+- Show the specific heading this should be added under
+
+### 3. 📝 Heading Structure Rewrite
+- Propose a complete revised H1 → H2 → H3 heading hierarchy
+- The H1 must contain the primary keyword with highest impression volume
+- Add new H2 headings that cover the semantic keyword gaps
+- Format as a tree structure
+
+### 4. ✍️ Copy Additions (Write the actual copy)
+For each major gap or improvement area, write the actual paragraph, list, or table to add to the page. This should be:
+- Minimum 2 new content blocks (each 80–150 words)
+- Structured to match search intent of the top-impression queries
+- Naturally weaving in secondary keywords from the GSC list
+- Marked with [INSERT AFTER: "existing text anchor"]
+
+### 5. 🔗 Internal Linking Opportunities
+Based on the page's topic, suggest 3–5 specific internal link placements:
+- What anchor text to use
+- What type of destination page to link to (category, product, blog post)
+- Where in the existing content to place it (quote a few words of context)
+
+### 6. ⚡ Core Web Vitals & Speed Fix Roadmap
+Map each failing metric to a specific technical fix:
+- LCP issue → specific image/font/server cause + fix (lazy loading, preload, CDN, etc.)
+- CLS issue → specific layout shift cause + CSS fix
+- INP issue → specific JS blocking cause + optimization
+Prioritize by ranking impact.
+
+### 7. 📊 Schema Markup Recommendation
+Recommend the 1–2 most impactful Schema.org types for this page topic and write a complete ready-to-implement JSON-LD block.
+
+### 8. 🎯 Prioritized Action Plan
+A final 5-item ordered checklist ranked by expected SEO impact (high/medium/low), effort (1-3 weeks / 1 month / 3 months), and estimated ranking improvement.
+
+Output in clean, professional Markdown. Be specific — reference actual content from the page."""
+
+    # Prefer Grok for rich, expert on-page SEO analysis
+    if grok_key:
+        return grok_reasoning(prompt, grok_key, max_tokens=2500)
+    return reasoning(prompt, api_key, model, max_tokens=1500)
 
 
 # ===========================================================================
 # Module 10 — Executive Summary & Roadmap Planner
 # ===========================================================================
-def module_executive_summary(results: dict, api_key: str | None, model: str) -> dict:
+def module_executive_summary(results: dict, api_key: str | None, model: str, grok_key: str | None = None) -> dict:
     m1 = results.get("organic", {})
     bullets = []
     bullets.append(
@@ -781,7 +932,10 @@ def module_executive_summary(results: dict, api_key: str | None, model: str) -> 
         "   - Month 3: Content Expansion & Link Building (Unexplored Gems, cannibalization)\n\n"
         "Keep it professional, highly structured, and boardroom-ready."
     )
-    narrative = reasoning(prompt, api_key, model, max_tokens=800)
+    if grok_key:
+        narrative = grok_reasoning(prompt, grok_key, max_tokens=1000)
+    else:
+        narrative = reasoning(prompt, api_key, model, max_tokens=800)
     return {
         "title": "Module 10 — Executive Summary & Growth Strategy",
         "key_points": bullets,
