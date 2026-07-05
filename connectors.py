@@ -9,6 +9,56 @@ Auth:
 """
 
 from datetime import date, timedelta
+import sqlite3
+import json
+import os
+
+DB_PATH = os.path.join(os.path.dirname(__file__), "api_cache.db")
+
+def init_cache_db():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_cache (
+                cache_key TEXT PRIMARY KEY,
+                cache_value TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+def get_cached_value(key: str):
+    try:
+        init_cache_db()
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT cache_value FROM api_cache WHERE cache_key = ?", (key,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return json.loads(row[0])
+    except Exception:
+        pass
+    return None
+
+def set_cached_value(key: str, value):
+    try:
+        init_cache_db()
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR REPLACE INTO api_cache (cache_key, cache_value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (key, json.dumps(value))
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
 
 
 # ---------------------------------------------------------------------------
@@ -83,75 +133,83 @@ def fetch_ga4_page_metrics(
     organic_only: bool = True,
 ) -> list[dict]:
     """Returns page-level GA4 metrics for current vs prior period."""
-    from google.analytics.data_v1beta import BetaAnalyticsDataClient
-    from google.analytics.data_v1beta.types import (
-        RunReportRequest, Dimension, Metric, DateRange,
-        FilterExpression, Filter,
-    )
+    cache_key = f"ga4_page_metrics_{property_id}_{days}_{organic_only}"
+    try:
+        from google.analytics.data_v1beta import BetaAnalyticsDataClient
+        from google.analytics.data_v1beta.types import (
+            RunReportRequest, Dimension, Metric, DateRange,
+            FilterExpression, Filter,
+        )
 
-    creds = _ga4_gsc_credentials(
-        service_account_info,
-        ["https://www.googleapis.com/auth/analytics.readonly"],
-    )
-    client = BetaAnalyticsDataClient(credentials=creds)
-    (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days)
+        creds = _ga4_gsc_credentials(
+            service_account_info,
+            ["https://www.googleapis.com/auth/analytics.readonly"],
+        )
+        client = BetaAnalyticsDataClient(credentials=creds)
+        (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days)
 
-    metrics = [
-        Metric(name="sessions"),
-        Metric(name="engagedSessions"),
-        Metric(name="bounceRate"),
-        Metric(name="averageSessionDuration"),
-        Metric(name="conversions"),
-    ]
-    dim_filter = None
-    if organic_only:
-        dim_filter = FilterExpression(
-            filter=Filter(
-                field_name="sessionDefaultChannelGroup",
-                string_filter=Filter.StringFilter(value="Organic Search")
+        metrics = [
+            Metric(name="sessions"),
+            Metric(name="engagedSessions"),
+            Metric(name="bounceRate"),
+            Metric(name="averageSessionDuration"),
+            Metric(name="conversions"),
+        ]
+        dim_filter = None
+        if organic_only:
+            dim_filter = FilterExpression(
+                filter=Filter(
+                    field_name="sessionDefaultChannelGroup",
+                    string_filter=Filter.StringFilter(value="Organic Search")
+                )
             )
-        )
 
-    def _run(start, end):
-        req = RunReportRequest(
-            property=f"properties/{property_id}",
-            dimensions=[Dimension(name="pagePath")],
-            metrics=metrics,
-            date_ranges=[DateRange(
-                start_date=start.isoformat(), end_date=end.isoformat()
-            )],
-            dimension_filter=dim_filter,
-            limit=250,
-        )
-        out = {}
-        for row in client.run_report(req).rows:
-            page = row.dimension_values[0].value
-            v = [m.value for m in row.metric_values]
-            out[page] = {
-                "sessions": int(float(v[0])),
-                "engaged_sessions": int(float(v[1])),
-                "bounce_rate": float(v[2]),
-                "avg_session_duration": float(v[3]),
-                "conversions": int(float(v[4])),
-            }
-        return out
+        def _run(start, end):
+            req = RunReportRequest(
+                property=f"properties/{property_id}",
+                dimensions=[Dimension(name="pagePath")],
+                metrics=metrics,
+                date_ranges=[DateRange(
+                    start_date=start.isoformat(), end_date=end.isoformat()
+                )],
+                dimension_filter=dim_filter,
+                limit=250,
+            )
+            out = {}
+            for row in client.run_report(req).rows:
+                page = row.dimension_values[0].value
+                v = [m.value for m in row.metric_values]
+                out[page] = {
+                    "sessions": int(float(v[0])),
+                    "engaged_sessions": int(float(v[1])),
+                    "bounce_rate": float(v[2]),
+                    "avg_session_duration": float(v[3]),
+                    "conversions": int(float(v[4])),
+                }
+            return out
 
-    cur, prev = _run(cur_s, cur_e), _run(prev_s, prev_e)
-    rows = []
-    for page, c in cur.items():
-        p = prev.get(page, {})
-        rows.append({
-            "page_path": page,
-            "sessions": c["sessions"],
-            "prev_sessions": p.get("sessions", 0),
-            "engaged_sessions": c["engaged_sessions"],
-            "bounce_rate": c["bounce_rate"],
-            "avg_session_duration": c["avg_session_duration"],
-            "conversions": c["conversions"],
-            "prev_conversions": p.get("conversions", 0),
-        })
-    rows.sort(key=lambda r: r["sessions"], reverse=True)
-    return rows
+        cur, prev = _run(cur_s, cur_e), _run(prev_s, prev_e)
+        rows = []
+        for page, c in cur.items():
+            p = prev.get(page, {})
+            rows.append({
+                "page_path": page,
+                "sessions": c["sessions"],
+                "prev_sessions": p.get("sessions", 0),
+                "engaged_sessions": c["engaged_sessions"],
+                "bounce_rate": c["bounce_rate"],
+                "avg_session_duration": c["avg_session_duration"],
+                "conversions": c["conversions"],
+                "prev_conversions": p.get("conversions", 0),
+            })
+        rows.sort(key=lambda r: r["sessions"], reverse=True)
+        set_cached_value(cache_key, rows)
+        return rows
+    except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+        raise exc
 
 
 def fetch_ga4_totals(
@@ -161,45 +219,55 @@ def fetch_ga4_totals(
     organic_only: bool = True,
 ) -> dict:
     """Returns overall total organic sessions for current vs prior period (no page dimension limits)."""
-    from google.analytics.data_v1beta import BetaAnalyticsDataClient
-    from google.analytics.data_v1beta.types import (
-        RunReportRequest, Metric, DateRange, FilterExpression, Filter
-    )
+    cache_key = f"ga4_totals_{property_id}_{days}_{organic_only}"
+    try:
+        from google.analytics.data_v1beta import BetaAnalyticsDataClient
+        from google.analytics.data_v1beta.types import (
+            RunReportRequest, Metric, DateRange, FilterExpression, Filter
+        )
 
-    creds = _ga4_gsc_credentials(
-        service_account_info,
-        ["https://www.googleapis.com/auth/analytics.readonly"],
-    )
-    client = BetaAnalyticsDataClient(credentials=creds)
-    (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days)
+        creds = _ga4_gsc_credentials(
+            service_account_info,
+            ["https://www.googleapis.com/auth/analytics.readonly"],
+        )
+        client = BetaAnalyticsDataClient(credentials=creds)
+        (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days)
 
-    metrics = [Metric(name="sessions")]
-    dim_filter = None
-    if organic_only:
-        dim_filter = FilterExpression(
-            filter=Filter(
-                field_name="sessionDefaultChannelGroup",
-                string_filter=Filter.StringFilter(value="Organic Search")
+        metrics = [Metric(name="sessions")]
+        dim_filter = None
+        if organic_only:
+            dim_filter = FilterExpression(
+                filter=Filter(
+                    field_name="sessionDefaultChannelGroup",
+                    string_filter=Filter.StringFilter(value="Organic Search")
+                )
             )
-        )
 
-    def _run_totals(start, end):
-        req = RunReportRequest(
-            property=f"properties/{property_id}",
-            metrics=metrics,
-            date_ranges=[DateRange(
-                start_date=start.isoformat(), end_date=end.isoformat()
-            )],
-            dimension_filter=dim_filter,
-        )
-        resp = client.run_report(req)
-        if resp.rows:
-            return int(float(resp.rows[0].metric_values[0].value))
-        return 0
+        def _run_totals(start, end):
+            req = RunReportRequest(
+                property=f"properties/{property_id}",
+                metrics=metrics,
+                date_ranges=[DateRange(
+                    start_date=start.isoformat(), end_date=end.isoformat()
+                )],
+                dimension_filter=dim_filter,
+            )
+            resp = client.run_report(req)
+            if resp.rows:
+                return int(float(resp.rows[0].metric_values[0].value))
+            return 0
 
-    cur_total = _run_totals(cur_s, cur_e)
-    prev_total = _run_totals(prev_s, prev_e)
-    return {"current_total": cur_total, "prev_total": prev_total}
+        cur_total = _run_totals(cur_s, cur_e)
+        prev_total = _run_totals(prev_s, prev_e)
+        result = {"current_total": cur_total, "prev_total": prev_total}
+        set_cached_value(cache_key, result)
+        return result
+    except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+        raise exc
+
 
 
 
@@ -211,48 +279,56 @@ def fetch_gsc_page_metrics(
     service_account_info: dict,
     days: int = 30,
 ) -> list[dict]:
-    from googleapiclient.discovery import build
+    cache_key = f"gsc_page_metrics_{site_url}_{days}"
+    try:
+        from googleapiclient.discovery import build
 
-    creds = _ga4_gsc_credentials(
-        service_account_info,
-        ["https://www.googleapis.com/auth/webmasters.readonly"],
-    )
-    service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
-    (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days)
+        creds = _ga4_gsc_credentials(
+            service_account_info,
+            ["https://www.googleapis.com/auth/webmasters.readonly"],
+        )
+        service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+        (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days)
 
-    def _query(start, end):
-        body = {
-            "startDate": start.isoformat(),
-            "endDate": end.isoformat(),
-            "dimensions": ["page"],
-            "rowLimit": 1000,
-        }
-        resp = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
-        out = {}
-        for r in resp.get("rows", []):
-            page = r["keys"][0]
-            out[page] = {
-                "clicks": r.get("clicks", 0),
-                "impressions": r.get("impressions", 0),
-                "ctr": r.get("ctr", 0.0),
-                "position": r.get("position", 0.0),
+        def _query(start, end):
+            body = {
+                "startDate": start.isoformat(),
+                "endDate": end.isoformat(),
+                "dimensions": ["page"],
+                "rowLimit": 1000,
             }
-        return out
+            resp = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
+            out = {}
+            for r in resp.get("rows", []):
+                page = r["keys"][0]
+                out[page] = {
+                    "clicks": r.get("clicks", 0),
+                    "impressions": r.get("impressions", 0),
+                    "ctr": r.get("ctr", 0.0),
+                    "position": r.get("position", 0.0),
+                }
+            return out
 
-    cur, prev = _query(cur_s, cur_e), _query(prev_s, prev_e)
-    rows = []
-    for page, c in cur.items():
-        p = prev.get(page, {})
-        rows.append({
-            "page": page,
-            "clicks": c["clicks"], "prev_clicks": p.get("clicks", 0),
-            "impressions": c["impressions"],
-            "prev_impressions": p.get("impressions", 0),
-            "ctr": c["ctr"], "prev_ctr": p.get("ctr", 0.0),
-            "position": c["position"], "prev_position": p.get("position", 0.0),
-        })
-    rows.sort(key=lambda r: r["clicks"], reverse=True)
-    return rows
+        cur, prev = _query(cur_s, cur_e), _query(prev_s, prev_e)
+        rows = []
+        for page, c in cur.items():
+            p = prev.get(page, {})
+            rows.append({
+                "page": page,
+                "clicks": c["clicks"], "prev_clicks": p.get("clicks", 0),
+                "impressions": c["impressions"],
+                "prev_impressions": p.get("impressions", 0),
+                "ctr": c["ctr"], "prev_ctr": p.get("ctr", 0.0),
+                "position": c["position"], "prev_position": p.get("position", 0.0),
+            })
+        rows.sort(key=lambda r: r["clicks"], reverse=True)
+        set_cached_value(cache_key, rows)
+        return rows
+    except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+        raise exc
 
 
 # ---------------------------------------------------------------------------
@@ -268,33 +344,41 @@ def fetch_gsc_queries_flat(
     Returns top queries sorted by clicks — flat list, no page grouping.
     Used as seed keywords in Module 6.
     """
-    from googleapiclient.discovery import build
+    cache_key = f"gsc_queries_flat_{site_url}_{days}_{top_n}"
+    try:
+        from googleapiclient.discovery import build
 
-    creds = _ga4_gsc_credentials(
-        service_account_info,
-        ["https://www.googleapis.com/auth/webmasters.readonly"],
-    )
-    service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
-    (cur_s, cur_e), _ = _period_dates(days)
+        creds = _ga4_gsc_credentials(
+            service_account_info,
+            ["https://www.googleapis.com/auth/webmasters.readonly"],
+        )
+        service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+        (cur_s, cur_e), _ = _period_dates(days)
 
-    body = {
-        "startDate": cur_s.isoformat(),
-        "endDate": cur_e.isoformat(),
-        "dimensions": ["query"],
-        "rowLimit": top_n,
-        "orderBy": [{"fieldName": "clicks", "sortOrder": "DESCENDING"}],
-    }
-    resp = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
-    rows = []
-    for r in resp.get("rows", []):
-        rows.append({
-            "query": r["keys"][0],
-            "clicks": r.get("clicks", 0),
-            "impressions": r.get("impressions", 0),
-            "ctr": r.get("ctr", 0.0),
-            "position": r.get("position", 0.0),
-        })
-    return rows
+        body = {
+            "startDate": cur_s.isoformat(),
+            "endDate": cur_e.isoformat(),
+            "dimensions": ["query"],
+            "rowLimit": top_n,
+            "orderBy": [{"fieldName": "clicks", "sortOrder": "DESCENDING"}],
+        }
+        resp = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
+        rows = []
+        for r in resp.get("rows", []):
+            rows.append({
+                "query": r["keys"][0],
+                "clicks": r.get("clicks", 0),
+                "impressions": r.get("impressions", 0),
+                "ctr": r.get("ctr", 0.0),
+                "position": r.get("position", 0.0),
+            })
+        set_cached_value(cache_key, rows)
+        return rows
+    except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+        raise exc
 
 
 def fetch_gsc_top_queries(
@@ -304,33 +388,41 @@ def fetch_gsc_top_queries(
     top_n: int = 5,
 ) -> dict:
     """Page → top N queries. Kept for compatibility / future Module 7."""
-    from googleapiclient.discovery import build
+    cache_key = f"gsc_top_queries_{site_url}_{days}_{top_n}"
+    try:
+        from googleapiclient.discovery import build
 
-    creds = _ga4_gsc_credentials(
-        service_account_info,
-        ["https://www.googleapis.com/auth/webmasters.readonly"],
-    )
-    service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
-    (cur_s, cur_e), _ = _period_dates(days)
+        creds = _ga4_gsc_credentials(
+            service_account_info,
+            ["https://www.googleapis.com/auth/webmasters.readonly"],
+        )
+        service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+        (cur_s, cur_e), _ = _period_dates(days)
 
-    body = {
-        "startDate": cur_s.isoformat(), "endDate": cur_e.isoformat(),
-        "dimensions": ["page", "query"], "rowLimit": 5000,
-    }
-    resp = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
-    by_page: dict = {}
-    for r in resp.get("rows", []):
-        page, query = r["keys"][0], r["keys"][1]
-        by_page.setdefault(page, []).append({
-            "query": query, "clicks": r.get("clicks", 0),
-            "impressions": r.get("impressions", 0),
-            "position": r.get("position", 0.0),
-        })
-    for page in by_page:
-        by_page[page] = sorted(
-            by_page[page], key=lambda q: q["clicks"], reverse=True
-        )[:top_n]
-    return by_page
+        body = {
+            "startDate": cur_s.isoformat(), "endDate": cur_e.isoformat(),
+            "dimensions": ["page", "query"], "rowLimit": 5000,
+        }
+        resp = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
+        by_page: dict = {}
+        for r in resp.get("rows", []):
+            page, query = r["keys"][0], r["keys"][1]
+            by_page.setdefault(page, []).append({
+                "query": query, "clicks": r.get("clicks", 0),
+                "impressions": r.get("impressions", 0),
+                "position": r.get("position", 0.0),
+            })
+        for page in by_page:
+            by_page[page] = sorted(
+                by_page[page], key=lambda q: q["clicks"], reverse=True
+            )[:top_n]
+        set_cached_value(cache_key, by_page)
+        return by_page
+    except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+        raise exc
 
 
 # ---------------------------------------------------------------------------
@@ -341,85 +433,101 @@ def fetch_clarity_insights(api_token: str, num_days: int = 3) -> list[dict]:
     Clarity returns aggregated metrics for the last 1-3 days only (API limit).
     We group URLs by base URL path (stripping query parameters) to prevent cluttering.
     """
-    import requests
+    cache_key = f"clarity_insights_{num_days}"
+    try:
+        import requests
 
-    url = "https://www.clarity.ms/export-data/api/v1/project-live-insights"
-    headers = {"Authorization": f"Bearer {api_token}"}
-    params = {"numOfDays": num_days, "dimension1": "URL"}
-    resp = requests.get(url, headers=headers, params=params, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
+        url = "https://www.clarity.ms/export-data/api/v1/project-live-insights"
+        headers = {"Authorization": f"Bearer {api_token}"}
+        params = {"numOfDays": num_days, "dimension1": "URL"}
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
 
-    temp_data: dict = {}
+        temp_data: dict = {}
 
-    metric_map = {
-        "Traffic":         ("total_sessions",     "totalSessionCount"),
-        "ScrollDepth":     ("avg_scroll_percent",  "averageScrollDepth"),
-        "EngagementTime":  ("avg_engagement_time", "totalTime"),
-        "DeadClickCount":  ("dead_clicks",         "subTotal"),
-        "RageClickCount":  ("rage_clicks",         "subTotal"),
-        "QuickbackClick":  ("quickback_clicks",    "subTotal"),
-    }
+        metric_map = {
+            "traffic":         ("total_sessions",     "totalSessionCount"),
+            "scrolldepth":     ("avg_scroll_percent",  "averageScrollDepth"),
+            "engagementtime":  ("avg_engagement_time", "totalTime"),
+            "deadclickcount":  ("dead_clicks",         "subTotal"),
+            "rageclickcount":  ("rage_clicks",         "subTotal"),
+            "quickbackclick":  ("quickback_clicks",    "subTotal"),
+        }
 
-    # Collect raw values for each metric for each normalized URL
-    for metric in data if isinstance(data, list) else data.get("metrics", []):
-        name = metric.get("metricName") or metric.get("metric")
-        field, value_key = metric_map.get(name, (None, None))
-        if not field:
-            continue
-        for info in metric.get("information", []):
-            raw_url = info.get("Url") or info.get("URL") or info.get("url")
-            if not raw_url:
+        # Collect raw values for each metric for each normalized URL
+        for metric in data if isinstance(data, list) else data.get("metrics", []):
+            name = metric.get("metricName") or metric.get("metric")
+            if not name:
                 continue
-            # Normalize: strip query parameters and trailing slash
-            norm_url = raw_url.split("?")[0].rstrip("/") or "/"
-            
-            val = info.get(value_key) or info.get("subTotal") or 0
-            try:
-                numeric_val = float(val) if "percent" in field or "time" in field else int(float(val))
-            except (TypeError, ValueError):
-                numeric_val = 0
-            
-            record = temp_data.setdefault(norm_url, {
-                "url": norm_url,
-                "total_sessions": 0,
-                "dead_clicks": 0,
-                "rage_clicks": 0,
-                "quickback_clicks": 0,
-                "_scroll_sum": 0.0,
-                "_scroll_count": 0,
-                "_engage_sum": 0.0,
-                "_engage_count": 0,
-            })
-            
-            if field == "total_sessions":
-                record["total_sessions"] += int(numeric_val)
-            elif field == "dead_clicks":
-                record["dead_clicks"] += int(numeric_val)
-            elif field == "rage_clicks":
-                record["rage_clicks"] += int(numeric_val)
-            elif field == "quickback_clicks":
-                record["quickback_clicks"] += int(numeric_val)
-            elif field == "avg_scroll_percent":
-                record["_scroll_sum"] += float(numeric_val)
-                record["_scroll_count"] += 1
-            elif field == "avg_engagement_time":
-                record["_engage_sum"] += float(numeric_val)
-                record["_engage_count"] += 1
+            norm_name = name.replace(" ", "").lower()
+            field, value_key = metric_map.get(norm_name, (None, None))
+            if not field:
+                continue
+            for info in metric.get("information", []):
+                raw_url = info.get("Url") or info.get("URL") or info.get("url")
+                if not raw_url:
+                    continue
+                # Normalize: strip query parameters and trailing slash
+                norm_url = raw_url.split("?")[0].rstrip("/") or "/"
+                
+                # Dynamic value extraction with fallbacks
+                val = info.get(value_key) or info.get("subTotal") or info.get("value") or info.get("average") or info.get("count") or 0
+                try:
+                    numeric_val = float(val) if "percent" in field or "time" in field else int(float(val))
+                except (TypeError, ValueError):
+                    numeric_val = 0
+                
+                # If scroll depth is returned as a fraction between 0.0 and 1.0, scale to 0-100%
+                if field == "avg_scroll_percent" and 0.0 < numeric_val <= 1.0:
+                    numeric_val *= 100.0
+                
+                record = temp_data.setdefault(norm_url, {
+                    "url": norm_url,
+                    "total_sessions": 0,
+                    "dead_clicks": 0,
+                    "rage_clicks": 0,
+                    "quickback_clicks": 0,
+                    "_scroll_sum": 0.0,
+                    "_scroll_count": 0,
+                    "_engage_sum": 0.0,
+                    "_engage_count": 0,
+                })
+                
+                if field == "total_sessions":
+                    record["total_sessions"] += int(numeric_val)
+                elif field == "dead_clicks":
+                    record["dead_clicks"] += int(numeric_val)
+                elif field == "rage_clicks":
+                    record["rage_clicks"] += int(numeric_val)
+                elif field == "quickback_clicks":
+                    record["quickback_clicks"] += int(numeric_val)
+                elif field == "avg_scroll_percent":
+                    record["_scroll_sum"] += float(numeric_val)
+                    record["_scroll_count"] += 1
+                elif field == "avg_engagement_time":
+                    record["_engage_sum"] += float(numeric_val)
+                    record["_engage_count"] += 1
 
-    # Finalize aggregates
-    result = []
-    for norm_url, rec in temp_data.items():
-        result.append({
-            "url": norm_url,
-            "total_sessions": rec["total_sessions"],
-            "dead_clicks": rec["dead_clicks"],
-            "rage_clicks": rec["rage_clicks"],
-            "quickback_clicks": rec["quickback_clicks"],
-            "avg_scroll_percent": round(rec["_scroll_sum"] / rec["_scroll_count"], 1) if rec["_scroll_count"] > 0 else 0.0,
-            "avg_engagement_time": round(rec["_engage_sum"] / rec["_engage_count"], 1) if rec["_engage_count"] > 0 else 0.0,
-        })
-    return result
+        # Finalize aggregates
+        result = []
+        for norm_url, rec in temp_data.items():
+            result.append({
+                "url": norm_url,
+                "total_sessions": rec["total_sessions"],
+                "dead_clicks": rec["dead_clicks"],
+                "rage_clicks": rec["rage_clicks"],
+                "quickback_clicks": rec["quickback_clicks"],
+                "avg_scroll_percent": round(rec["_scroll_sum"] / rec["_scroll_count"], 1) if rec["_scroll_count"] > 0 else 0.0,
+                "avg_engagement_time": round(rec["_engage_sum"] / rec["_engage_count"], 1) if rec["_engage_count"] > 0 else 0.0,
+            })
+        set_cached_value(cache_key, result)
+        return result
+    except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+        raise exc
 
 
 def fetch_pagespeed_metrics(url: str, api_key: str | None = None) -> dict:
@@ -433,17 +541,18 @@ def fetch_pagespeed_metrics(url: str, api_key: str | None = None) -> dict:
         "inp": float (ms) or None
     }
     """
-    import requests
-    endpoint = "https://pagespeedonline.googleapis.com/pagespeedonline/v5/runPagespeed"
-    params = {
-        "url": url,
-        "strategy": "mobile",
-        "category": "performance"
-    }
-    if api_key:
-        params["key"] = api_key
-    
+    cache_key = f"pagespeed_{url}"
     try:
+        import requests
+        endpoint = "https://pagespeedonline.googleapis.com/pagespeedonline/v5/runPagespeed"
+        params = {
+            "url": url,
+            "strategy": "mobile",
+            "category": "performance"
+        }
+        if api_key:
+            params["key"] = api_key
+        
         resp = requests.get(endpoint, params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
@@ -461,14 +570,19 @@ def fetch_pagespeed_metrics(url: str, api_key: str | None = None) -> dict:
         if "interaction-to-next-paint" in audits:
             inp_val = audits.get("interaction-to-next-paint", {}).get("numericValue", 0.0)
         
-        return {
+        result = {
             "url": url,
             "performance_score": score,
             "lcp": round(lcp_val, 2),
             "cls": round(cls_val, 3),
             "inp": round(inp_val, 0)
         }
+        set_cached_value(cache_key, result)
+        return result
     except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
         return {
             "url": url,
             "performance_score": None,
@@ -484,11 +598,18 @@ def fetch_jina_markdown(url: str) -> str:
     Calls the Jina Reader API to get clean markdown from a URL.
     Returns: markdown content or error string.
     """
-    import requests
-    jina_url = f"https://r.jina.ai/{url}"
+    cache_key = f"jina_{url}"
     try:
+        import requests
+        jina_url = f"https://r.jina.ai/{url}"
         resp = requests.get(jina_url, timeout=20)
         resp.raise_for_status()
-        return resp.text
+        result = resp.text
+        set_cached_value(cache_key, result)
+        return result
     except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
         return f"Failed to fetch content from Jina Reader: {exc}"
+

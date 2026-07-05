@@ -35,3 +35,8 @@ Thumbs.db
 *.html
 !secrets.toml.example
 
+# Cache and local databases
+api_cache.db
+*.db
+
+
