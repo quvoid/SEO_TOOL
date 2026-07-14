@@ -74,6 +74,19 @@ export const api = {
     return req<any[]>("/reports");
   },
 
+  // ---- admin ----
+  adminUsers: () => req<any[]>("/admin/users"),
+  adminAddUser: (email: string, role: string) =>
+    req("/admin/users", { method: "POST", body: JSON.stringify({ email, role }) }),
+  adminUpdateUser: (id: string, patch: { role?: string; is_active?: boolean }) =>
+    req(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  adminCredentials: () => req<any[]>("/admin/credentials"),
+  adminAddCredential: (body: { label: string; client_id: string; client_secret: string; refresh_token: string }) =>
+    req("/admin/credentials", { method: "POST", body: JSON.stringify(body) }),
+  adminAddBrand: (body: Record<string, unknown>) =>
+    req("/admin/clients", { method: "POST", body: JSON.stringify(body) }),
+  adminDeleteBrand: (id: string) => req(`/admin/clients/${id}`, { method: "DELETE" }),
+
   async getReport(id: string): Promise<Results | null> {
     if (USE_MOCK) return MOCK_RESULTS;
     const r = await req<{ status: string; results?: Results }>(`/reports/${id}`);

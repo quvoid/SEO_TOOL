@@ -26,11 +26,8 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 
 
 def _authorized(db: DbSession, user: User, client: Client) -> bool:
-    if user.role == Role.admin or client.owner_user_id == user.id:
-        return True
-    return db.query(ClientAccess).filter(
-        ClientAccess.user_id == user.id, ClientAccess.client_id == client.id
-    ).count() > 0
+    # Internal team tool: any authenticated member can run/view reports for any brand.
+    return client is not None
 
 
 def _run_job(report_id: str, days: int, model: str, analyst_name: str,

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { LayoutDashboard, Search, LogOut, Download, History as HistoryIcon } from "lucide-react";
+import { LayoutDashboard, Search, LogOut, Download, History as HistoryIcon, Shield } from "lucide-react";
 import { USE_MOCK, api } from "../api";
 import { MODULE_ORDER, type Client, type Results, type User } from "../types";
+import { Admin } from "./Admin";
 import { DateRange, type Range, presetRange } from "./DateRange";
 import { ExecutiveSummary } from "./ExecutiveSummary";
 import { SchbangLogo } from "./Logo";
@@ -9,7 +10,7 @@ import { ModuleRouter } from "./ModuleViews";
 import { OnPage } from "./OnPage";
 import { Select } from "./Select";
 
-type Tab = "exec" | (typeof MODULE_ORDER)[number]["key"] | "onpage";
+type Tab = "exec" | (typeof MODULE_ORDER)[number]["key"] | "onpage" | "admin";
 
 export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [clients, setClients] = useState<Client[]>([]);
@@ -89,6 +90,11 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
         <button className={`nav-item ${tab === "onpage" ? "active" : ""}`} onClick={() => setTab("onpage")}>
           <span className="ico"><Search size={17} /></span> On-Page SEO
         </button>
+        {user.role === "admin" && (
+          <button className={`nav-item ${tab === "admin" ? "active" : ""}`} onClick={() => setTab("admin")}>
+            <span className="ico"><Shield size={17} /></span> Admin
+          </button>
+        )}
 
         {history.length > 0 && (
           <>
@@ -137,7 +143,7 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
           </div>
         )}
 
-        {tab !== "onpage" && (
+        {tab !== "onpage" && tab !== "admin" && (
           <>
             <div className="controls">
               <div className="field client-field">
@@ -196,6 +202,7 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
         )}
 
         {tab === "onpage" && <OnPage />}
+        {tab === "admin" && user.role === "admin" && <Admin />}
       </main>
     </div>
   );

@@ -198,7 +198,14 @@ function Heatmap({ mod, results }: { mod: ModuleResult; results: Results }) {
 /* ---- Module 5: Scroll ---- */
 type ScrollKey = "avg_scroll_percent" | "sessions" | "active_users";
 function Scroll({ mod }: { mod: ModuleResult }) {
-  const pages = arr(mod.pages).length ? arr(mod.pages) : arr(mod.all_pages);
+  // Normalize both the new shape (pages) and the old shape (all_pages: {url,total_sessions}).
+  const raw = arr(mod.pages).length ? arr(mod.pages) : arr(mod.all_pages);
+  const pages = raw.map((p) => ({
+    page: p.page ?? p.url ?? "",
+    avg_scroll_percent: p.avg_scroll_percent ?? null,
+    sessions: p.sessions ?? p.total_sessions ?? 0,
+    active_users: p.active_users ?? 0,
+  }));
   const clarityOk = mod.clarity_available !== false && pages.some((p) => p.avg_scroll_percent != null);
   const [sortKey, setSortKey] = useState<ScrollKey>(clarityOk ? "avg_scroll_percent" : "sessions");
   const [dir, setDir] = useState<"asc" | "desc">(clarityOk ? "asc" : "desc");

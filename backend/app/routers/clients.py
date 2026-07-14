@@ -48,11 +48,8 @@ def _accessible_client_ids(db: DbSession, user: User) -> set[str]:
 
 @router.get("", response_model=list[ClientOut])
 def list_clients(user: User = Depends(get_current_user), db: DbSession = Depends(get_db)):
-    if user.role == Role.admin:
-        clients = db.query(Client).all()
-    else:
-        ids = _accessible_client_ids(db, user)
-        clients = db.query(Client).filter(Client.id.in_(ids)).all() if ids else []
+    # Internal team tool: every authenticated member sees all brands.
+    clients = db.query(Client).order_by(Client.display_name.asc()).all()
     return [_to_out(c, user) for c in clients]
 
 

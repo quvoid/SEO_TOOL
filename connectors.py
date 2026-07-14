@@ -153,7 +153,7 @@ def fetch_ga4_page_metrics(
     prev_end: str | None = None,
 ) -> list[dict]:
     """Returns page-level GA4 metrics for current vs prior period."""
-    cache_key = f"ga4_page_metrics_{property_id}_{days}_{organic_only}_{end_date}_{prev_start}_{prev_end}"
+    cache_key = f"ga4_page_metrics_v2_{property_id}_{days}_{organic_only}_{end_date}_{prev_start}_{prev_end}"
     try:
         from google.analytics.data_v1beta import BetaAnalyticsDataClient
         from google.analytics.data_v1beta.types import (

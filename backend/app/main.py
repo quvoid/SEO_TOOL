@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from .db import Base, engine
-from .routers import auth, clients, health, onpage, reports
+from .routers import admin, auth, clients, health, onpage, reports
 from .settings import get_settings
 
 _settings = get_settings()
@@ -40,6 +40,7 @@ app.include_router(auth.router)
 app.include_router(clients.router)
 app.include_router(reports.router)
 app.include_router(onpage.router)
+app.include_router(admin.router)
 
 
 @app.on_event("startup")
