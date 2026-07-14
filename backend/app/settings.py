@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # dev-bypass and real OAuth login. Guarantees these accounts never lose access.
     admin_emails: str = "omkar.rakshe@schbang.com"
 
+    # One-time boot seeding (for hosts without a shell, e.g. Render free tier).
+    # When true, the app seeds owner + credential + clients on startup IF the DB
+    # has no clients yet. Set it, deploy once, then you can leave it or remove it.
+    seed_on_startup: bool = False
+
     # Encryption (Tier-1)
     credential_encryption_key: str = ""
 

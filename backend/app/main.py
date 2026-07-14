@@ -47,3 +47,11 @@ def _startup() -> None:
     # Create tables if they don't exist. Idempotent and safe to run every boot.
     # (Once the schema stabilises, switch to Alembic migrations — see README.)
     Base.metadata.create_all(bind=engine)
+
+    # Optional one-time boot seeding for hosts without a shell (Render free tier).
+    if _settings.seed_on_startup:
+        try:
+            import seed  # backend/seed.py is on sys.path (app runs from backend/)
+            print("[startup] seed_on_startup:", seed.seed_database(only_if_empty=True))
+        except Exception as exc:  # noqa: BLE001 — never let seeding crash boot
+            print(f"[startup] seed skipped: {exc}")

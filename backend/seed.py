@@ -38,7 +38,7 @@ OWNER = os.environ.get("OWNER_EMAIL", "omkar.rakshe@schbang.com").lower()
 def _require(name: str) -> str:
     v = os.environ.get(name)
     if not v:
-        sys.exit(f"ERROR: env var {name} is required")
+        raise RuntimeError(f"env var {name} is required for seeding")
     return v
 
 
@@ -54,10 +54,17 @@ def _load_clients() -> dict:
     return {}
 
 
-def main() -> None:
+def seed_database(only_if_empty: bool = False) -> str:
+    """
+    Seed the owner admin + credential + clients. Returns a status string.
+    - only_if_empty: skip if any Client already exists (safe for boot-time seeding).
+    Raises on missing required env vars (USER_OAUTH_*).
+    """
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
+        if only_if_empty and db.query(Client).count() > 0:
+            return "skip: clients already exist"
         user = db.query(User).filter(User.email == OWNER).one_or_none()
         if user is None:
             user = User(email=OWNER, name=OWNER.split("@")[0].replace(".", " ").title(),
@@ -97,9 +104,13 @@ def main() -> None:
             ))
             n += 1
         db.commit()
-        print(f"[ok] seeded owner={OWNER}, 1 credential, {n} clients")
+        return f"[ok] seeded owner={OWNER}, 1 credential, {n} clients"
     finally:
         db.close()
+
+
+def main() -> None:
+    print(seed_database(only_if_empty=False))
 
 
 if __name__ == "__main__":
