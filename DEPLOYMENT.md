@@ -75,6 +75,30 @@ Browser ──HTTPS──> Vercel (React)  ──/api/* rewrite──>  Railway 
 
 ---
 
+## STEP 1 (ALTERNATIVE) — Backend on Render
+
+Prefer Render? Use `render.yaml` instead of Railway. Same result.
+
+1. **New → Blueprint → pick this repo.** Render reads `render.yaml` and creates the
+   web service (from `backend/Dockerfile`) + a free Postgres.
+2. **Fill in the secret env vars** (marked `sync: false`) in the dashboard — same
+   values as the Railway table above: `CREDENTIAL_ENCRYPTION_KEY`, the `AUTH_*` and
+   `USER_OAUTH_*` values, `GEMINI_API_KEY`, `CLIENTS_JSON`, etc. Leave
+   `AUTH_REDIRECT_URI` / `FRONTEND_ORIGIN` until you have the Vercel URL (Step 4).
+3. **Deploy.** Copy the URL (e.g. `https://seo-backend.onrender.com`); check `/health`.
+4. **Seed the DB**: service → **Shell** tab → run `python backend/seed.py`.
+
+Notes:
+- `DATABASE_URL` is injected from the Postgres automatically (the app normalizes the
+  `postgres://` URL for its driver).
+- The **free** web plan spins down when idle → first request has a ~50s cold start,
+  and a long report could be interrupted if the tab is closed. Use the **starter**
+  plan for reliable report jobs (the `render.yaml` already sets `starter`).
+
+Everywhere below, wherever it says the Railway URL, use your Render URL instead.
+
+---
+
 ## STEP 2 — Point the frontend at the backend
 
 Edit **`frontend/vercel.json`** — replace the placeholder with your Railway URL:
