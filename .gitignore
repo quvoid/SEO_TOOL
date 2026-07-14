@@ -31,9 +31,10 @@ Thumbs.db
 # Logs
 *.log
 
-# Downloaded Client Reports
-*.html
+# Downloaded Client Reports (only at repo root, not the frontend app)
+/*.html
 !secrets.toml.example
+!frontend/index.html
 
 # Cache and local databases
 api_cache.db
