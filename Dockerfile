@@ -1,25 +1,21 @@
-# ── Build ────────────────────────────────────────────────────────────────────
-FROM python:3.11-slim
+# Root Dockerfile — builds the FastAPI backend (the project migrated off Streamlit).
+# Mirrors backend/Dockerfile so hosts that default to ./Dockerfile still work.
+# Python 3.12+ required: analysis.py uses PEP 701 nested f-strings.
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install dependencies first (layer cached unless requirements change)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install backend deps first (layer cached unless requirements change)
+COPY backend/requirements.txt ./backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt
 
-# Copy application code
+# Copy the whole repo so the backend can import analysis.py / connectors.py / demo_data.py
 COPY . .
 
-# ── Runtime ──────────────────────────────────────────────────────────────────
-# Cloud Run injects PORT env var (default 8080)
-ENV PORT=8080
+WORKDIR /app/backend
 
-EXPOSE 8080
+ENV PORT=8000
+EXPOSE 8000
 
-# Streamlit needs headless mode; address 0.0.0.0 so Cloud Run can reach it
-CMD ["python", "-m", "streamlit", "run", "app.py", \
-     "--server.port=8080", \
-     "--server.address=0.0.0.0", \
-     "--server.headless=true", \
-     "--server.enableCORS=false", \
-     "--server.enableXsrfProtection=true"]
+# Cloud Run / Railway / Render inject $PORT
+CMD ["sh", "-c", "gunicorn app.main:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:${PORT} --timeout 120"]
