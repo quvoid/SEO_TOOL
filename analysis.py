@@ -26,6 +26,9 @@ DEFAULT_MODEL = "gemini-2.5-flash"
 # AI reasoning layer
 # ===========================================================================
 import time as _time
+import re
+import unicodedata
+import urllib.parse
 
 
 def reasoning(
@@ -166,11 +169,48 @@ def _normalize_page(p: str) -> str:
     return p.split("?")[0].rstrip("/") or "/"
 
 
+BRAND_KEYWORD_OVERRIDES: dict[str, list[str]] = {
+    "ultratechcement": [
+        "ultra",
+        "ultratech",
+        "ultra tech",
+        "ultratech cement",
+        "\u0905\u0932\u094d\u091f\u094d\u0930\u093e",
+        "\u0905\u0932\u094d\u091f\u094d\u0930\u093e\u091f\u0947\u0915",
+        "\u0b85\u0bb2\u0bcd\u0b9f\u0bcd\u0bb0\u0bbe",
+        "\u0ba4\u0bca\u0bb4\u0bbf\u0bb2\u0bcd\u0ba8\u0bc1\u0b9f\u0bcd\u0baa\u0bae\u0bcd",
+        "\u0b85\u0bb2\u0bcd\u0b9f\u0bcd\u0bb0\u0bbe\u0b9f\u0bc6\u0b95\u0bcd",
+        "\u0d05\u0d7e\u0d1f\u0d4d\u0d30\u0d3e",
+        "\u0d05\u0d7e\u0d1f\u0d4d\u0d30\u0d3e\u0d1f\u0d46\u0d15\u0d4d",
+        "\u0d38\u0d3e\u0d19\u0d4d\u0d15\u0d47\u0d24\u0d3f\u0d15",
+        "\u0c85\u0cb2\u0ccd\u0c9f\u0ccd\u0cb0\u0cbe",
+        "\u0c85\u0cb2\u0ccd\u0c9f\u0ccd\u0cb0\u0cbe\u0c9f\u0cc6\u0c95\u0ccd",
+        "\u0ca4\u0c82\u0ca4\u0ccd\u0cb0\u0c9c\u0ccd\u0c9e\u0cbe\u0ca8",
+        "\u0c05\u0c32\u0c4d\u0c1f\u0c4d\u0c30\u0c3e",
+        "\u0c1f\u0c46\u0c15\u0c4d \u0c38\u0c3f\u0c2e\u0c46\u0c02\u0c1f\u0c4d",
+        "\u0c1f\u0c46\u0c15\u0c4d",
+        "\u0a85\u0ab2\u0acd\u0a9f\u0acd\u0ab0\u0abe\u0a9f\u0ac7\u0a95",
+        "\u0a9f\u0ac7\u0a95",
+        "\u0a85\u0ab2\u0acd\u0a9f\u0acd\u0ab0\u0abe",
+        "\u0b05\u0b32\u0b1f\u0b4d\u0b30\u0b3e\u0b1f\u0b47\u0b15\u0b4d",
+        "\u0b1f\u0b47\u0b15\u0b4d",
+        "\u0b05\u0b32\u0b1f\u0b4d\u0b30\u0b3e",
+        "\u099f\u09c7\u0995",
+        "\u0986\u09b2\u099f\u09cd\u09b0\u09be",
+        "\u0986\u09b2\u099f\u09cd\u09b0\u09be\u099f\u09c7\u0995",
+    ],
+}
+
+
 def _detect_brand_terms(site_url: str) -> list[str]:
-    """Auto-detect brand terms from the domain name of site_url."""
+    """Return brand terms for a site URL, preferring explicit client overrides."""
     try:
         url = site_url if "://" in site_url else "https://" + site_url
-        domain = url.split("://", 1)[1].split("/")[0].replace("www.", "")
+        domain = url.split("://", 1)[1].split("/")[0].replace("www.", "").lower()
+        for key, terms in BRAND_KEYWORD_OVERRIDES.items():
+            if key in domain:
+                return [term.lower() for term in terms if term]
+
         brand_raw = domain.split(".")[0].lower()
         terms = [brand_raw]
         # If compound domain (>12 chars), add shorter prefix heuristic
@@ -179,6 +219,97 @@ def _detect_brand_terms(site_url: str) -> list[str]:
         return [t for t in terms if t]
     except Exception:
         return []
+
+
+# ---------------------------------------------------------------------------
+# Branded-term detection (regex-based)
+# ---------------------------------------------------------------------------
+# Canonical branded tokens (deduplicated list supplied by user)
+BRAND_TOKENS_RAW = [
+    "अल्ट्रा", "ultra", "अल्ट्राटेक", "ultratech", "tech",
+    "அல்ட்ரா", "தொழில்நுட்பம்", "அல்ட்ராடெக்",
+    "അൾട്രാ", "അൾട്രാടെക്", "സാങ്കേതിക",
+    "ಅಲ್ಟ್ರಾ", "ಅಲ್ಟ್ರಾಟೆಕ್", "ತಂತ್ರಜ್ಞಾನ",
+    "అల్ట్రా", "టెక్ సిమెంట్", "టెక్",
+    "અલ્ટ્રાટેક", "ટેક", "અલ્ટ્રા",
+    "अल्ट्रा", "अल्ट्राटेक",
+    "ଅଲଟ୍ରାଟେକ୍", "ଟେକ୍", "ଅଲଟ୍ରା",
+    "টেক", "আলট্রা", "আলট্রাটেক",
+]
+
+
+def _norm_token(t: str) -> str:
+    s = unicodedata.normalize("NFKD", (t or "")).lower()
+    # remove combining marks
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+# Build canonical set and compiled regexes at import time
+BRAND_TOKENS = sorted({_norm_token(t) for t in BRAND_TOKENS_RAW})
+_SHORT_TOKENS = [re.escape(t) for t in BRAND_TOKENS if len(t) < 4]
+_LONG_TOKENS = [re.escape(t) for t in BRAND_TOKENS if len(t) >= 4]
+
+WORD_RE = re.compile(r"\\b(?:" + "|".join(_SHORT_TOKENS) + r")\\b", flags=re.I | re.UNICODE) if _SHORT_TOKENS else None
+SUBSTR_RE = re.compile(r"(?:" + "|".join(_LONG_TOKENS) + r")", flags=re.I | re.UNICODE) if _LONG_TOKENS else None
+
+
+def _normalize_for_match(s: str) -> str:
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", s).lower()
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    # replace punctuation with spaces to allow word-boundary matches
+    s = re.sub(r"[\p{P}\p{S}]", " ", s) if False else re.sub(r"[\W_]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def is_branded(text: str | None, site_url: str | None = None) -> bool:
+    """Return True when `text` (query or url) looks branded per BRAND_TOKENS.
+
+    Matching heuristics:
+      - short/generic tokens require whole-word boundary match
+      - longer tokens allow substring matches (e.g., 'ultratech' inside 'ultratechcement')
+      - check hostname/path separately when `text` or `site_url` looks like a URL
+    """
+    if not text and not site_url:
+        return False
+
+    # Check site_url/hostname first (high-confidence)
+    try:
+        host = ""
+        if site_url:
+            host = urllib.parse.urlparse(site_url).netloc.lower()
+            if host:
+                for tok in BRAND_TOKENS:
+                    if tok and tok in host:
+                        return True
+    except Exception:
+        pass
+
+    if not text:
+        return False
+
+    # If text is a URL, inspect hostname and path
+    try:
+        parsed = urllib.parse.urlparse(text)
+        if parsed.netloc:
+            candidate = (parsed.netloc + " " + parsed.path).lower()
+        else:
+            candidate = text
+    except Exception:
+        candidate = text
+
+    norm = _normalize_for_match(candidate)
+
+    if WORD_RE and WORD_RE.search(norm):
+        return True
+    if SUBSTR_RE and SUBSTR_RE.search(norm):
+        return True
+
+    return False
 
 
 # ===========================================================================
@@ -459,14 +590,14 @@ def module_keyword_intelligence(
     positions 4–20, representing high-value, quick-win SEO opportunities.
 
     Opportunity logic:
-      - Keywords ranking in positions 4–20 (close to top 3, fixable with optimization)
+      - Keywords ranking in positions 4-20 (close to top 3, fixable with optimization)
       - Monthly impressions >= 100 (has traffic visibility)
       - Sorted by click uplift potential (impressions * target top-3 CTR - current clicks)
     """
     ESTIMATED_CTR_TOP3 = 0.10
     MIN_IMPRESSIONS = 100
 
-    # ── Position Bands ──────────────────────────────────────────────────────
+    # Position bands
     bands: dict[str, list] = {"1-3": [], "4-10": [], "11-20": [], "21-50": []}
     for row in gsc_queries:
         pos = row.get("position", 100)
@@ -801,8 +932,16 @@ def module_onpage_seo(jina_markdown: str, gsc_queries: list, pagespeed_stats: di
     # Word count of scraped content for context
     word_count = len(jina_markdown.split()) if jina_markdown else 0
     content_preview = jina_markdown[:18000]  # Give Grok the full page context up to limit
+    score_text = f"{score}%" if score is not None else "n/a"
+    lcp_text = f"{lcp}s" if lcp is not None else "n/a"
+    lcp_status = "🔴 POOR (>4s)" if lcp and lcp > 4 else "🟡 NEEDS WORK (>2.5s)" if lcp and lcp > 2.5 else "🟢 GOOD" if lcp else ""
+    cls_text = cls_v if cls_v is not None else "n/a"
+    cls_status = "🔴 POOR (>0.25)" if cls_v and cls_v > 0.25 else "🟡 NEEDS WORK (>0.1)" if cls_v and cls_v > 0.1 else "🟢 GOOD" if cls_v else ""
+    inp_text = f"{inp}ms" if inp is not None else "n/a"
+    inp_status = "🔴 POOR (>500ms)" if inp and inp > 500 else "🟡 NEEDS WORK (>200ms)" if inp and inp > 200 else "🟢 GOOD" if inp else ""
+    fcp_text = f"{fcp}s" if fcp is not None else "n/a"
 
-    prompt = f"""You are a world-class SEO specialist and conversion copywriter conducting a professional on-page SEO audit.
+    prompt = """You are a world-class SEO specialist and conversion copywriter conducting a professional on-page SEO audit.
 
 You have access to:
 1. The live scraped content of the page (via Jina Reader)
@@ -818,11 +957,11 @@ You have access to:
 {q_lines}
 
 ## PAGESPEED INSIGHTS (Mobile)
-- Performance Score: {f'{score}%' if score is not None else 'n/a'}
-- LCP (Largest Contentful Paint): {f'{lcp}s' if lcp is not None else 'n/a'} {'🔴 POOR (>4s)' if lcp and lcp > 4 else '🟡 NEEDS WORK (>2.5s)' if lcp and lcp > 2.5 else '🟢 GOOD' if lcp else ''}
-- CLS (Cumulative Layout Shift): {cls_v if cls_v is not None else 'n/a'} {'🔴 POOR (>0.25)' if cls_v and cls_v > 0.25 else '🟡 NEEDS WORK (>0.1)' if cls_v and cls_v > 0.1 else '🟢 GOOD' if cls_v else ''}
-- INP (Interaction to Next Paint): {f'{inp}ms' if inp is not None else 'n/a'} {'🔴 POOR (>500ms)' if inp and inp > 500 else '🟡 NEEDS WORK (>200ms)' if inp and inp > 200 else '🟢 GOOD' if inp else ''}
-- FCP (First Contentful Paint): {f'{fcp}s' if fcp is not None else 'n/a'}
+- Performance Score: {score_text}
+- LCP (Largest Contentful Paint): {lcp_text} {lcp_status}
+- CLS (Cumulative Layout Shift): {cls_text} {cls_status}
+- INP (Interaction to Next Paint): {inp_text} {inp_status}
+- FCP (First Contentful Paint): {fcp_text}
 
 ---
 
@@ -878,7 +1017,19 @@ Recommend the 1–2 most impactful Schema.org types for this page topic and writ
 ### 8. 🎯 Prioritized Action Plan
 A final 5-item ordered checklist ranked by expected SEO impact (high/medium/low), effort (1-3 weeks / 1 month / 3 months), and estimated ranking improvement.
 
-Output in clean, professional Markdown. Be specific — reference actual content from the page."""
+Output in clean, professional Markdown. Be specific — reference actual content from the page.""".format(
+        word_count=word_count,
+        content_preview=content_preview,
+        q_lines=q_lines,
+        score_text=score_text,
+        lcp_text=lcp_text,
+        lcp_status=lcp_status,
+        cls_text=cls_text,
+        cls_status=cls_status,
+        inp_text=inp_text,
+        inp_status=inp_status,
+        fcp_text=fcp_text,
+    )
 
     # Prefer Grok for rich, expert on-page SEO analysis
     if grok_key:

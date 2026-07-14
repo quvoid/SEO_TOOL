@@ -333,11 +333,9 @@ def load_data(client_name: str, client_cfg_frozen: str, days: int) -> dict:
 
     if cfg.get("use_demo_data"):
         demo_ga4 = demo_data.ga4_page_metrics()
-        demo_sum = sum(r["sessions"] for r in demo_ga4)
-        demo_prev = sum(r["prev_sessions"] for r in demo_ga4)
         return {
             "ga4": demo_ga4,
-            "ga4_totals": {"current_total": demo_sum, "prev_total": demo_prev},
+            "ga4_totals": demo_data.ga4_totals(),
             "gsc": demo_data.gsc_page_metrics(),
             "gsc_queries": demo_data.gsc_top_queries_flat(),
             "gsc_queries_prev": demo_data.gsc_top_queries_flat_prev(),
@@ -534,6 +532,7 @@ def run_report(client_name: str, client_cfg: dict, days: int, model: str) -> dic
         "generated": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "analyst": user.get("name", ""),
     }
+    results["_ga4_totals"] = data.get("ga4_totals", {})
     return results
 
 
@@ -560,6 +559,58 @@ def _plotly_bar(series: pd.Series, color: str = "#6366f1", title: str = "") -> g
         font=dict(family="Inter"),
     )
     return fig
+
+
+def _format_seconds(seconds: float | int | None) -> str:
+    if seconds is None:
+        return "n/a"
+    total = int(round(float(seconds)))
+    minutes, secs = divmod(total, 60)
+    return f"{minutes}m {secs:02d}s" if minutes else f"{secs}s"
+
+
+def _format_rate(value: float | int | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{float(value) * 100:.2f}%"
+
+
+def _format_number(value: float | int | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{int(round(float(value))):,}"
+
+
+def _table_height(df: pd.DataFrame) -> int:
+    rows = len(df.index) if df is not None else 0
+    return max(96, 38 + (rows + 1) * 35)
+
+
+def _render_dataframe(
+    df: pd.DataFrame,
+    column_config: dict | None = None,
+    hide_index: bool = True,
+) -> None:
+    st.dataframe(
+        df,
+        width="stretch",
+        height=_table_height(df),
+        hide_index=hide_index,
+        column_config=column_config,
+    )
+
+
+def _trend_text(value, good_when_up: bool = True, suffix: str = "%", decimals: int = 1) -> str:
+    if value is None or pd.isna(value):
+        return "→ n/a"
+    val = float(value)
+    if abs(val) < 0.05:
+        return f"→ {val:.{decimals}f}{suffix}"
+    arrow = "↑" if val > 0 else "↓"
+    sign = "+" if val > 0 else ""
+    good = (val > 0 and good_when_up) or (val < 0 and not good_when_up)
+    marker = "Good" if good else "Watch"
+    return f"{arrow} {sign}{val:.{decimals}f}{suffix} · {marker}"
 
 
 # ---------------------------------------------------------------------------
@@ -680,6 +731,49 @@ def show_results(results: dict):
     </div>
     """
     st.html(kpi_strip)
+
+    ga4_totals = results.get("_ga4_totals", {})
+    ga4_cards = [
+        ("Sessions", _format_number(ga4_totals.get("current_total")), "S", "#6366f1"),
+        ("Engagement Rate", _format_rate(ga4_totals.get("engagement_rate")), "%", "#10b981"),
+        ("Total Users", _format_number(ga4_totals.get("total_users")), "U", "#0ea5e9"),
+        ("Returning Users", _format_number(ga4_totals.get("returning_users")), "R", "#f59e0b"),
+        ("New Users", _format_number(ga4_totals.get("new_users")), "+", "#22c55e"),
+        ("Avg Session Duration", _format_seconds(ga4_totals.get("avg_session_duration")), "T", "#8b5cf6"),
+        ("Active Users", _format_number(ga4_totals.get("active_users")), "A", "#14b8a6"),
+        ("Sessions / Active User", f"{float(ga4_totals.get('sessions_per_user') or 0):.2f}", "/", "#64748b"),
+        ("Bounce Rate", _format_rate(ga4_totals.get("bounce_rate")), "B", "#ef4444"),
+    ]
+    ga4_cards_html = "".join(
+        f"""
+        <div style="flex:1;min-width:150px;background:rgba(15,23,42,0.92);
+                    border:1px solid rgba(148,163,184,0.22);border-radius:8px;
+                    padding:14px 15px;box-shadow:0 10px 28px rgba(15,23,42,0.16);">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;
+                             border-radius:6px;background:{color};color:white;font-size:12px;font-weight:900;">{icon}</span>
+                <span style="font-size:10px;font-weight:800;color:#cbd5e1;text-transform:uppercase;
+                             letter-spacing:0.6px;line-height:1.2;">{label}</span>
+            </div>
+            <div style="font-size:23px;font-weight:900;color:white;letter-spacing:0;">{value}</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:4px;">Last {meta_days} days</div>
+        </div>
+        """
+        for label, value, icon, color in ga4_cards
+    )
+    st.html(
+        f"""
+        <div style="margin:-6px 0 24px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">
+                <div style="font-size:12px;font-weight:900;color:#334155;text-transform:uppercase;letter-spacing:1px;">
+                    GA4 Overview Metrics
+                </div>
+                <div style="font-size:11px;color:#64748b;">{meta_site}</div>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">{ga4_cards_html}</div>
+        </div>
+        """
+    )
 
     # ── Key Findings as styled chips ───────────────────────────────────────
     if ex.get("key_points"):

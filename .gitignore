@@ -40,5 +40,13 @@ api_cache.db
 *.db
 ab_tests.json
 
+# Client registry — contains real GA4 property IDs / site URLs. Never commit.
+clients.json
+!clients.example.json
+
+# Backend secrets
+backend/.env
+*.key
+
 
 

@@ -114,13 +114,30 @@ def _ga4_gsc_credentials(service_account_info: dict, scopes: list):
     )
 
 
-def _period_dates(days: int = 30):
-    """Returns (current_period, prior_period) as (start, end) date tuples."""
-    end = date.today() - timedelta(days=1)   # yesterday — today is partial in GA4
+def _period_dates(days: int = 30, end_date: str | None = None,
+                  prev_start: str | None = None, prev_end: str | None = None):
+    """
+    Returns (current_period, prior_period) as (start, end) date tuples.
+
+    - end_date: optional ISO 'YYYY-MM-DD' — the last day of the current window.
+      Defaults to yesterday (today is partial in GA4).
+    - prev_start / prev_end: optional ISO dates for a CUSTOM comparison window
+      (GA4-style "compare to" custom range). When both are given they are used
+      verbatim; otherwise the comparison is the immediately preceding period of
+      equal length.
+    """
+    if end_date:
+        end = date.fromisoformat(end_date) if isinstance(end_date, str) else end_date
+    else:
+        end = date.today() - timedelta(days=1)
     cur_start = end - timedelta(days=days - 1)
-    prev_end = cur_start - timedelta(days=1)
-    prev_start = prev_end - timedelta(days=days - 1)
-    return (cur_start, end), (prev_start, prev_end)
+    if prev_start and prev_end:
+        ps = date.fromisoformat(prev_start) if isinstance(prev_start, str) else prev_start
+        pe = date.fromisoformat(prev_end) if isinstance(prev_end, str) else prev_end
+        return (cur_start, end), (ps, pe)
+    p_end = cur_start - timedelta(days=1)
+    p_start = p_end - timedelta(days=days - 1)
+    return (cur_start, end), (p_start, p_end)
 
 
 # ---------------------------------------------------------------------------
@@ -131,9 +148,12 @@ def fetch_ga4_page_metrics(
     service_account_info: dict,
     days: int = 30,
     organic_only: bool = True,
+    end_date: str | None = None,
+    prev_start: str | None = None,
+    prev_end: str | None = None,
 ) -> list[dict]:
     """Returns page-level GA4 metrics for current vs prior period."""
-    cache_key = f"ga4_page_metrics_{property_id}_{days}_{organic_only}"
+    cache_key = f"ga4_page_metrics_{property_id}_{days}_{organic_only}_{end_date}_{prev_start}_{prev_end}"
     try:
         from google.analytics.data_v1beta import BetaAnalyticsDataClient
         from google.analytics.data_v1beta.types import (
@@ -146,7 +166,7 @@ def fetch_ga4_page_metrics(
             ["https://www.googleapis.com/auth/analytics.readonly"],
         )
         client = BetaAnalyticsDataClient(credentials=creds)
-        (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days)
+        (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days, end_date, prev_start, prev_end)
 
         metrics = [
             Metric(name="sessions"),
@@ -217,9 +237,12 @@ def fetch_ga4_totals(
     service_account_info: dict,
     days: int = 30,
     organic_only: bool = True,
+    end_date: str | None = None,
+    prev_start: str | None = None,
+    prev_end: str | None = None,
 ) -> dict:
-    """Returns overall total organic sessions for current vs prior period (no page dimension limits)."""
-    cache_key = f"ga4_totals_{property_id}_{days}_{organic_only}"
+    """Returns overall GA4 summary metrics for current vs prior period."""
+    cache_key = f"ga4_totals_{property_id}_{days}_{organic_only}_{end_date}_{prev_start}_{prev_end}"
     try:
         from google.analytics.data_v1beta import BetaAnalyticsDataClient
         from google.analytics.data_v1beta.types import (
@@ -231,9 +254,17 @@ def fetch_ga4_totals(
             ["https://www.googleapis.com/auth/analytics.readonly"],
         )
         client = BetaAnalyticsDataClient(credentials=creds)
-        (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days)
+        (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days, end_date, prev_start, prev_end)
 
-        metrics = [Metric(name="sessions")]
+        metrics = [
+            Metric(name="sessions"),
+            Metric(name="engagementRate"),
+            Metric(name="totalUsers"),
+            Metric(name="newUsers"),
+            Metric(name="activeUsers"),
+            Metric(name="averageSessionDuration"),
+            Metric(name="bounceRate"),
+        ]
         dim_filter = None
         if organic_only:
             dim_filter = FilterExpression(
@@ -254,12 +285,37 @@ def fetch_ga4_totals(
             )
             resp = client.run_report(req)
             if resp.rows:
-                return int(float(resp.rows[0].metric_values[0].value))
-            return 0
+                values = [m.value for m in resp.rows[0].metric_values]
+                sessions = int(float(values[0] or 0))
+                total_users = int(float(values[2] or 0))
+                new_users = int(float(values[3] or 0))
+                active_users = int(float(values[4] or 0))
+                return {
+                    "current_total": sessions,
+                    "engagement_rate": float(values[1] or 0),
+                    "total_users": total_users,
+                    "new_users": new_users,
+                    "returning_users": total_users - new_users,
+                    "active_users": active_users,
+                    "avg_session_duration": float(values[5] or 0),
+                    "bounce_rate": float(values[6] or 0),
+                    "sessions_per_user": (sessions / active_users) if active_users else 0.0,
+                }
+            return {
+                "current_total": 0,
+                "engagement_rate": 0.0,
+                "total_users": 0,
+                "new_users": 0,
+                "returning_users": 0,
+                "active_users": 0,
+                "avg_session_duration": 0.0,
+                "bounce_rate": 0.0,
+                "sessions_per_user": 0.0,
+            }
 
-        cur_total = _run_totals(cur_s, cur_e)
-        prev_total = _run_totals(prev_s, prev_e)
-        result = {"current_total": cur_total, "prev_total": prev_total}
+        result = _run_totals(cur_s, cur_e)
+        prev_result = _run_totals(prev_s, prev_e)
+        result["prev_total"] = prev_result["current_total"]
         set_cached_value(cache_key, result)
         return result
     except Exception as exc:
@@ -278,8 +334,11 @@ def fetch_gsc_page_metrics(
     site_url: str,
     service_account_info: dict,
     days: int = 30,
+    end_date: str | None = None,
+    prev_start: str | None = None,
+    prev_end: str | None = None,
 ) -> list[dict]:
-    cache_key = f"gsc_page_metrics_{site_url}_{days}"
+    cache_key = f"gsc_page_metrics_{site_url}_{days}_{end_date}_{prev_start}_{prev_end}"
     try:
         from googleapiclient.discovery import build
 
@@ -288,7 +347,7 @@ def fetch_gsc_page_metrics(
             ["https://www.googleapis.com/auth/webmasters.readonly"],
         )
         service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
-        (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days)
+        (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days, end_date, prev_start, prev_end)
 
         def _query(start, end):
             body = {
@@ -623,14 +682,15 @@ def fetch_gsc_query_page_pairs(
     service_account_info: dict,
     days: int = 30,
     top_n: int = 2000,
+    end_date: str | None = None,
 ) -> list[dict]:
     """Fetch GSC data with both query AND page dimensions for cannibalization detection."""
-    cache_key = f"gsc_query_page_pairs_{site_url}_{days}"
+    cache_key = f"gsc_query_page_pairs_{site_url}_{days}_{end_date}"
     try:
         from googleapiclient.discovery import build
         creds = _ga4_gsc_credentials(service_account_info, ["https://www.googleapis.com/auth/webmasters.readonly"])
         service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
-        (cur_s, cur_e), _ = _period_dates(days)
+        (cur_s, cur_e), _ = _period_dates(days, end_date)
         body = {"startDate": cur_s.isoformat(), "endDate": cur_e.isoformat(), "dimensions": ["query", "page"], "rowLimit": top_n}
         resp = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
         rows = [{"query": r["keys"][0], "page": r["keys"][1], "clicks": r.get("clicks",0), "impressions": r.get("impressions",0), "ctr": r.get("ctr",0.0), "position": r.get("position",0.0)} for r in resp.get("rows", [])]
@@ -646,14 +706,14 @@ def fetch_gsc_query_page_pairs(
 # ---------------------------------------------------------------------------
 # GSC Queries with Previous Period — for New vs Lost Query WoW (Module 6)
 # ---------------------------------------------------------------------------
-def fetch_gsc_queries_with_prev(site_url: str, service_account_info: dict, days: int = 30, top_n: int = 200) -> tuple:
+def fetch_gsc_queries_with_prev(site_url: str, service_account_info: dict, days: int = 30, top_n: int = 200, end_date: str | None = None, prev_start: str | None = None, prev_end: str | None = None) -> tuple:
     """Returns (current_queries, prev_queries) for new/lost query WoW diff."""
-    cache_key = f"gsc_queries_with_prev_{site_url}_{days}_{top_n}"
+    cache_key = f"gsc_queries_with_prev_{site_url}_{days}_{top_n}_{end_date}_{prev_start}_{prev_end}"
     try:
         from googleapiclient.discovery import build
         creds = _ga4_gsc_credentials(service_account_info, ["https://www.googleapis.com/auth/webmasters.readonly"])
         service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
-        (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days)
+        (cur_s, cur_e), (prev_s, prev_e) = _period_dates(days, end_date, prev_start, prev_end)
         def _run(start, end):
             body = {"startDate": start.isoformat(), "endDate": end.isoformat(), "dimensions": ["query"], "rowLimit": top_n, "orderBy": [{"fieldName": "clicks", "sortOrder": "DESCENDING"}]}
             resp = service.searchanalytics().query(siteUrl=site_url, body=body).execute()

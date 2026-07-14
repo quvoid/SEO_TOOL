@@ -1,0 +1,17 @@
+{
+  "_comment": "TEMPLATE ONLY. Copy to clients.json (gitignored) and fill in real values. Set use_demo_data=true for local testing without credentials.",
+  "clients": {
+    "🎯 Demo — BuildMart (Sample Data)": {
+      "use_demo_data": true,
+      "ga4_property_id": "",
+      "gsc_site_url": "",
+      "organic_only": true
+    },
+    "Example Brand": {
+      "use_demo_data": false,
+      "ga4_property_id": "000000000",
+      "gsc_site_url": "https://www.example.com/",
+      "organic_only": true
+    }
+  }
+}

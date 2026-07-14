@@ -11,7 +11,23 @@ home loans, cement guides) so the analysis reads realistically.
 
 from datetime import date, timedelta
 
-SITE_URL = "https://demo-buildmart.example.com"
+SITE_URL = "https://www.ultratechcement.com"
+
+
+def ga4_totals():
+    """GA4 overview totals for the selected period."""
+    return {
+        "current_total": 467279,
+        "prev_total": 442860,
+        "engagement_rate": 0.5075,
+        "total_users": 450126,
+        "returning_users": 17057,
+        "new_users": 621194,
+        "avg_session_duration": 121.0,
+        "active_users": 436908,
+        "sessions_per_user": 1.07,
+        "bounce_rate": 0.4925,
+    }
 
 # ---------------------------------------------------------------------------
 # GA4-style page metrics: current period vs prior period
@@ -143,6 +159,9 @@ def gsc_top_queries_flat():
         {"query": "ultratech cement price list", "clicks": 870, "impressions": 21000, "ctr": 0.041, "position": 2.1},
         {"query": "ultratech cement dealers", "clicks": 520, "impressions": 14000, "ctr": 0.037, "position": 2.8},
         {"query": "ultratech premium cement", "clicks": 310, "impressions": 9500, "ctr": 0.033, "position": 3.2},
+        {"query": "\u0905\u0932\u094d\u091f\u094d\u0930\u093e\u091f\u0947\u0915 cement", "clicks": 260, "impressions": 6800, "ctr": 0.038, "position": 2.9},
+        {"query": "\u0b85\u0bb2\u0bcd\u0b9f\u0bcd\u0bb0\u0bbe cement", "clicks": 180, "impressions": 5200, "ctr": 0.035, "position": 3.4},
+        {"query": "\u0c05\u0c32\u0c4d\u0c1f\u0c4d\u0c30\u0c3e cement", "clicks": 145, "impressions": 4300, "ctr": 0.034, "position": 3.8},
         {"query": "load bearing wall construction", "clicks": 88, "impressions": 5400, "ctr": 0.016, "position": 22.3},
         {"query": "earthquake resistant house design", "clicks": 72, "impressions": 4800, "ctr": 0.015, "position": 31.5},
     ]
@@ -164,6 +183,7 @@ def gsc_top_queries_flat_prev():
         {"query": "foundation repair cost", "clicks": 190, "impressions": 9500, "ctr": 0.020, "position": 9.1},
         {"query": "ultratech cement price list", "clicks": 790, "impressions": 19000, "ctr": 0.042, "position": 2.4},
         {"query": "ultratech cement dealers", "clicks": 460, "impressions": 12500, "ctr": 0.037, "position": 3.1},
+        {"query": "\u0905\u0932\u094d\u091f\u094d\u0930\u093e\u091f\u0947\u0915 cement", "clicks": 230, "impressions": 6400, "ctr": 0.036, "position": 3.0},
         {"query": "building construction steps india", "clicks": 140, "impressions": 7200, "ctr": 0.019, "position": 11.3},
         {"query": "site leveling cost per sqft", "clicks": 95, "impressions": 4100, "ctr": 0.023, "position": 16.8},
     ]
