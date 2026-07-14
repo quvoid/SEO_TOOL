@@ -25,6 +25,12 @@ DEFAULT_MODEL = "gemini-2.5-flash"
 # ===========================================================================
 # AI reasoning layer
 # ===========================================================================
+import time as _time
+import re
+import unicodedata
+import urllib.parse
+
+
 def reasoning(
     prompt: str,
     api_key: str | None,
@@ -32,46 +38,116 @@ def reasoning(
     system: str | None = None,
     max_tokens: int = 700,
 ) -> str:
-    """Call Gemini to narrate findings. Falls back gracefully if no key."""
+    """Call Gemini to narrate findings. Falls back gracefully if no key.
+    Retries with exponential backoff on quota/rate-limit errors."""
     if not api_key:
         return (
             "_[AI narrative disabled — add a Gemini API key in secrets.toml "
             "to generate written analysis. All tables and charts above are real "
             "computed findings.]_"
         )
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
 
-        model_name = model
-        # Map any legacy Claude model names to Gemini
-        if "claude" in model_name:
-            model_name = "gemini-2.5-flash"
+    sys = system or (
+        "You are a senior SEO and CRO analyst writing for a digital agency. "
+        "Be concise, specific and actionable. Reference the exact numbers given. "
+        "Output 2-4 short paragraphs or tight bullets. No preamble, no fluff. "
+        "End with a clearly labelled 'Recommendation:' line."
+    )
 
-        sys = system or (
-            "You are a senior SEO and CRO analyst writing for a digital agency. "
-            "Be concise, specific and actionable. Reference the exact numbers given. "
-            "Output 2-4 short paragraphs or tight bullets. No preamble, no fluff. "
-            "End with a clearly labelled 'Recommendation:' line."
-        )
+    import google.generativeai as genai
+    model_name = model
+    if "claude" in model_name or "grok" in model_name:
+        model_name = "gemini-2.5-flash"
 
-        config = genai.types.GenerationConfig(
-            max_output_tokens=max_tokens,
-            temperature=0.2,
-        )
+    genai.configure(api_key=api_key)
+    config_gen = genai.types.GenerationConfig(max_output_tokens=max_tokens, temperature=0.2)
+    gemini_model = genai.GenerativeModel(model_name=model_name, system_instruction=sys)
 
-        gemini_model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=sys,
-        )
+    max_attempts, base_wait = 4, 8
+    for attempt in range(max_attempts):
+        try:
+            response = gemini_model.generate_content(prompt, generation_config=config_gen)
+            return response.text
+        except Exception as exc:
+            msg = str(exc).lower()
+            is_quota = any(k in msg for k in ("quota", "rate", "429", "resource_exhausted", "exhausted"))
+            if is_quota and attempt < max_attempts - 1:
+                wait = base_wait * (2 ** attempt)  # 8s, 16s, 32s
+                _time.sleep(wait)
+                continue
+            return (
+                f"_[AI narrative unavailable: {exc}. "
+                "Structured findings above are still valid.]_"
+            )
+    return "_[AI narrative unavailable: max retries exceeded.]_"
 
-        response = gemini_model.generate_content(prompt, generation_config=config)
-        return response.text
-    except Exception as exc:
-        return (
-            f"_[AI narrative unavailable: {exc}. "
-            "Structured findings above are still valid.]_"
-        )
+
+def grok_reasoning(
+    prompt: str,
+    api_key: str | None,
+    system: str | None = None,
+    max_tokens: int = 1200,
+) -> str:
+    """Call xAI Grok (or Groq if api_key starts with 'gsk_') for deep AI Strategic Analysis.
+    Falls back to placeholder if no key.
+    Uses the OpenAI-compatible chat completions endpoint."""
+    if not api_key:
+        return "_[AI strategic analysis disabled — add xai.api_key in secrets.toml for strategic insights.]_"
+
+    sys = system or (
+        "You are a world-class SEO strategist and digital growth consultant. "
+        "You write precise, insightful, boardroom-ready analysis that connects data to business outcomes. "
+        "Be specific — cite exact metrics. Use clear structure with headers/bullets. "
+        "Never hedge. Be directive. End every section with a concrete, prioritised action."
+    )
+
+    # Automatically detect if Groq key is used (starts with gsk_)
+    is_groq = api_key.startswith("gsk_")
+    endpoint = "https://api.groq.com/openai/v1/chat/completions" if is_groq else "https://api.x.ai/v1/chat/completions"
+    model = "llama-3.3-70b-versatile" if is_groq else "grok-3-mini"
+    label = "Groq" if is_groq else "Grok"
+
+    max_attempts, base_wait = 4, 10
+    for attempt in range(max_attempts):
+        try:
+            import requests
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": sys},
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": max_tokens,
+                "temperature": 0.3,
+            }
+            resp = requests.post(
+                endpoint,
+                headers=headers,
+                json=payload,
+                timeout=90,
+            )
+            if resp.status_code == 429:
+                if attempt < max_attempts - 1:
+                    _time.sleep(base_wait * (2 ** attempt))
+                    continue
+                return f"_[{label} rate limit reached. Structured findings above are still valid.]_"
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+        except Exception as exc:
+            msg = str(exc).lower()
+            if ("429" in msg or "rate" in msg) and attempt < max_attempts - 1:
+                _time.sleep(base_wait * (2 ** attempt))
+                continue
+            return (
+                f"_[{label} strategic analysis unavailable: {exc}. "
+                "Structured findings above are still valid.]_"
+            )
+    return f"_[{label} analysis unavailable: max retries exceeded.]_"
+
 
 
 def _pct(cur, prev):
@@ -93,11 +169,48 @@ def _normalize_page(p: str) -> str:
     return p.split("?")[0].rstrip("/") or "/"
 
 
+BRAND_KEYWORD_OVERRIDES: dict[str, list[str]] = {
+    "ultratechcement": [
+        "ultra",
+        "ultratech",
+        "ultra tech",
+        "ultratech cement",
+        "\u0905\u0932\u094d\u091f\u094d\u0930\u093e",
+        "\u0905\u0932\u094d\u091f\u094d\u0930\u093e\u091f\u0947\u0915",
+        "\u0b85\u0bb2\u0bcd\u0b9f\u0bcd\u0bb0\u0bbe",
+        "\u0ba4\u0bca\u0bb4\u0bbf\u0bb2\u0bcd\u0ba8\u0bc1\u0b9f\u0bcd\u0baa\u0bae\u0bcd",
+        "\u0b85\u0bb2\u0bcd\u0b9f\u0bcd\u0bb0\u0bbe\u0b9f\u0bc6\u0b95\u0bcd",
+        "\u0d05\u0d7e\u0d1f\u0d4d\u0d30\u0d3e",
+        "\u0d05\u0d7e\u0d1f\u0d4d\u0d30\u0d3e\u0d1f\u0d46\u0d15\u0d4d",
+        "\u0d38\u0d3e\u0d19\u0d4d\u0d15\u0d47\u0d24\u0d3f\u0d15",
+        "\u0c85\u0cb2\u0ccd\u0c9f\u0ccd\u0cb0\u0cbe",
+        "\u0c85\u0cb2\u0ccd\u0c9f\u0ccd\u0cb0\u0cbe\u0c9f\u0cc6\u0c95\u0ccd",
+        "\u0ca4\u0c82\u0ca4\u0ccd\u0cb0\u0c9c\u0ccd\u0c9e\u0cbe\u0ca8",
+        "\u0c05\u0c32\u0c4d\u0c1f\u0c4d\u0c30\u0c3e",
+        "\u0c1f\u0c46\u0c15\u0c4d \u0c38\u0c3f\u0c2e\u0c46\u0c02\u0c1f\u0c4d",
+        "\u0c1f\u0c46\u0c15\u0c4d",
+        "\u0a85\u0ab2\u0acd\u0a9f\u0acd\u0ab0\u0abe\u0a9f\u0ac7\u0a95",
+        "\u0a9f\u0ac7\u0a95",
+        "\u0a85\u0ab2\u0acd\u0a9f\u0acd\u0ab0\u0abe",
+        "\u0b05\u0b32\u0b1f\u0b4d\u0b30\u0b3e\u0b1f\u0b47\u0b15\u0b4d",
+        "\u0b1f\u0b47\u0b15\u0b4d",
+        "\u0b05\u0b32\u0b1f\u0b4d\u0b30\u0b3e",
+        "\u099f\u09c7\u0995",
+        "\u0986\u09b2\u099f\u09cd\u09b0\u09be",
+        "\u0986\u09b2\u099f\u09cd\u09b0\u09be\u099f\u09c7\u0995",
+    ],
+}
+
+
 def _detect_brand_terms(site_url: str) -> list[str]:
-    """Auto-detect brand terms from the domain name of site_url."""
+    """Return brand terms for a site URL, preferring explicit client overrides."""
     try:
         url = site_url if "://" in site_url else "https://" + site_url
-        domain = url.split("://", 1)[1].split("/")[0].replace("www.", "")
+        domain = url.split("://", 1)[1].split("/")[0].replace("www.", "").lower()
+        for key, terms in BRAND_KEYWORD_OVERRIDES.items():
+            if key in domain:
+                return [term.lower() for term in terms if term]
+
         brand_raw = domain.split(".")[0].lower()
         terms = [brand_raw]
         # If compound domain (>12 chars), add shorter prefix heuristic
@@ -106,6 +219,97 @@ def _detect_brand_terms(site_url: str) -> list[str]:
         return [t for t in terms if t]
     except Exception:
         return []
+
+
+# ---------------------------------------------------------------------------
+# Branded-term detection (regex-based)
+# ---------------------------------------------------------------------------
+# Canonical branded tokens (deduplicated list supplied by user)
+BRAND_TOKENS_RAW = [
+    "अल्ट्रा", "ultra", "अल्ट्राटेक", "ultratech", "tech",
+    "அல்ட்ரா", "தொழில்நுட்பம்", "அல்ட்ராடெக்",
+    "അൾട്രാ", "അൾട്രാടെക്", "സാങ്കേതിക",
+    "ಅಲ್ಟ್ರಾ", "ಅಲ್ಟ್ರಾಟೆಕ್", "ತಂತ್ರಜ್ಞಾನ",
+    "అల్ట్రా", "టెక్ సిమెంట్", "టెక్",
+    "અલ્ટ્રાટેક", "ટેક", "અલ્ટ્રા",
+    "अल्ट्रा", "अल्ट्राटेक",
+    "ଅଲଟ୍ରାଟେକ୍", "ଟେକ୍", "ଅଲଟ୍ରା",
+    "টেক", "আলট্রা", "আলট্রাটেক",
+]
+
+
+def _norm_token(t: str) -> str:
+    s = unicodedata.normalize("NFKD", (t or "")).lower()
+    # remove combining marks
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+# Build canonical set and compiled regexes at import time
+BRAND_TOKENS = sorted({_norm_token(t) for t in BRAND_TOKENS_RAW})
+_SHORT_TOKENS = [re.escape(t) for t in BRAND_TOKENS if len(t) < 4]
+_LONG_TOKENS = [re.escape(t) for t in BRAND_TOKENS if len(t) >= 4]
+
+WORD_RE = re.compile(r"\\b(?:" + "|".join(_SHORT_TOKENS) + r")\\b", flags=re.I | re.UNICODE) if _SHORT_TOKENS else None
+SUBSTR_RE = re.compile(r"(?:" + "|".join(_LONG_TOKENS) + r")", flags=re.I | re.UNICODE) if _LONG_TOKENS else None
+
+
+def _normalize_for_match(s: str) -> str:
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", s).lower()
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    # replace punctuation with spaces to allow word-boundary matches
+    s = re.sub(r"[\p{P}\p{S}]", " ", s) if False else re.sub(r"[\W_]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def is_branded(text: str | None, site_url: str | None = None) -> bool:
+    """Return True when `text` (query or url) looks branded per BRAND_TOKENS.
+
+    Matching heuristics:
+      - short/generic tokens require whole-word boundary match
+      - longer tokens allow substring matches (e.g., 'ultratech' inside 'ultratechcement')
+      - check hostname/path separately when `text` or `site_url` looks like a URL
+    """
+    if not text and not site_url:
+        return False
+
+    # Check site_url/hostname first (high-confidence)
+    try:
+        host = ""
+        if site_url:
+            host = urllib.parse.urlparse(site_url).netloc.lower()
+            if host:
+                for tok in BRAND_TOKENS:
+                    if tok and tok in host:
+                        return True
+    except Exception:
+        pass
+
+    if not text:
+        return False
+
+    # If text is a URL, inspect hostname and path
+    try:
+        parsed = urllib.parse.urlparse(text)
+        if parsed.netloc:
+            candidate = (parsed.netloc + " " + parsed.path).lower()
+        else:
+            candidate = text
+    except Exception:
+        candidate = text
+
+    norm = _normalize_for_match(candidate)
+
+    if WORD_RE and WORD_RE.search(norm):
+        return True
+    if SUBSTR_RE and SUBSTR_RE.search(norm):
+        return True
+
+    return False
 
 
 # ===========================================================================
@@ -386,14 +590,14 @@ def module_keyword_intelligence(
     positions 4–20, representing high-value, quick-win SEO opportunities.
 
     Opportunity logic:
-      - Keywords ranking in positions 4–20 (close to top 3, fixable with optimization)
+      - Keywords ranking in positions 4-20 (close to top 3, fixable with optimization)
       - Monthly impressions >= 100 (has traffic visibility)
       - Sorted by click uplift potential (impressions * target top-3 CTR - current clicks)
     """
     ESTIMATED_CTR_TOP3 = 0.10
     MIN_IMPRESSIONS = 100
 
-    # ── Position Bands ──────────────────────────────────────────────────────
+    # Position bands
     bands: dict[str, list] = {"1-3": [], "4-10": [], "11-20": [], "21-50": []}
     for row in gsc_queries:
         pos = row.get("position", 100)
@@ -510,7 +714,7 @@ def module_keyword_intelligence(
 # ===========================================================================
 # Module 7 — Declining Pages UX Audit (GSC × Clarity × PageSpeed)
 # ===========================================================================
-def module_ux_audit(ga4_rows, gsc_rows, clarity_rows, pagespeed_data, api_key, model, crux_data=None):
+def module_ux_audit(ga4_rows, gsc_rows, clarity_rows, pagespeed_data, api_key, model, crux_data=None, grok_key=None):
     gsc_by_page = {_normalize_page(r["page"]): r for r in gsc_rows}
     clarity_by_page = {_normalize_page(c["url"]): c for c in clarity_rows}
 
@@ -569,21 +773,38 @@ def module_ux_audit(ga4_rows, gsc_rows, clarity_rows, pagespeed_data, api_key, m
 
     lines = []
     for row in audit_rows:
+        crux_note = ""
+        if row.get("crux_lcp") is not None:
+            crux_note = f" | CrUX field LCP: {row['crux_lcp']:.2f}s (real-user, {row.get('crux_rating', 'n/a')})"
         lines.append(
-            f"- {row['page']}: change {row['session_change_pct']:+.0f}% (sessions: {row['sessions']}), "
-            f"position {f'{row['avg_position']:.1f}' if row['avg_position'] is not None else 'n/a'}, "
-            f"PageSpeed {row['pagespeed_score'] if row['pagespeed_score'] is not None else 'n/a'}%, "
-            f"Dead/Rage Clicks: {row['dead_clicks']}/{row['rage_clicks']}, "
-            f"risk: {row['risk_level']}"
+            f"- {row['page']}: sessions {row['session_change_pct']:+.0f}% (now {row['sessions']}), "
+            f"avg GSC rank: {f"{row['avg_position']:.1f}" if row['avg_position'] is not None else 'n/a'}, "
+            f"Lab PageSpeed: {row['pagespeed_score'] if row['pagespeed_score'] is not None else 'n/a'}% | Lab LCP: {row['lcp'] if row['lcp'] is not None else 'n/a'}s"
+            f"{crux_note}, "
+            f"Dead/Rage Clicks: {row['dead_clicks']}/{row['rage_clicks']}, Risk: {row['risk_level']}"
         )
+
     prompt = (
-        "These top declining pages show a combination of search rank, user experience, and page speed performance metrics:\n"
+        "You are conducting a deep UX & SEO audit on these top declining pages. "
+        "You have BOTH Google PageSpeed Insights lab data AND Chrome UX Report (CrUX) real-user field data.\n\n"
+        "IMPORTANT: Lab scores measure controlled conditions. CrUX field data (p75) reflects REAL users — "
+        "this is what Google actually uses for Core Web Vitals rankings.\n\n"
+        "Declining pages:\n"
         + "\n".join(lines)
-        + "\n\nFor each declining page, diagnose the primary driver of the traffic drop: "
-        "is it Google algorithm rank decay, severe user experience friction (rage/dead clicks), or poor page speed (PageSpeed score & Core Web Vitals)? "
-        "Provide specific, actionable performance/speed or UX fixes."
+        + "\n\nFor EACH page, provide a structured diagnosis with:\n"
+        "**Primary Drop Driver** — Is it (a) Google algo rank decay, (b) UX friction (rage/dead clicks), "
+        "or (c) Core Web Vitals failure (CrUX field LCP > 2.5s / CLS > 0.1 / INP > 200ms)?\n"
+        "**3 Specific Fixes** — Prioritised by impact. For speed: exact image/script/render-blocking changes. "
+        "For UX: specific element/flow fixes based on dead/rage click patterns. For SEO: schema, title, intent alignment.\n"
+        "**Expected Recovery Timeline** — realistic estimate in weeks.\n\n"
+        "Be brutally specific. Name elements, not categories."
     )
-    narrative = reasoning(prompt, api_key, model)
+
+    # Use Grok for deep strategic analysis when available, fallback to Gemini
+    if grok_key:
+        narrative = grok_reasoning(prompt, grok_key, max_tokens=1400)
+    else:
+        narrative = reasoning(prompt, api_key, model, max_tokens=900)
 
     return {
         "title": "Module 7 — Declining Pages UX & Performance Audit",
@@ -690,49 +911,136 @@ def module_hidden_insights(ga4_rows, gsc_rows, clarity_rows, api_key, model):
 
 
 # ===========================================================================
-# Module 9 — Jina-Powered On-Page SEO Recommender (Helper Tool)
+# Module 9 — On-Page SEO Optimizer (Jina + GSC + PageSpeed + Grok)
 # ===========================================================================
-def module_onpage_seo(jina_markdown: str, gsc_queries: list, pagespeed_stats: dict, api_key: str | None, model: str) -> str:
-    """Uses scraped page markdown copy + GSC queries to generate a copywriting blueprint."""
+def module_onpage_seo(jina_markdown: str, gsc_queries: list, pagespeed_stats: dict, api_key: str | None, model: str, grok_key: str | None = None) -> str:
+    """Deep on-page SEO & copy optimization blueprint powered by Grok (with Gemini fallback)."""
     q_lines = "\n".join(
-        f"- {q['query']}: clicks {q['clicks']}, impressions {q['impressions']}, avg position {q['position']:.1f}"
-        for q in gsc_queries[:10]
-    ) or "- No search console queries found"
+        f"  {i+1}. [{q.get('position', '?'):.1f} avg rank] '{q['query']}' — "
+        f"{q.get('impressions', 0):,} impressions, {q.get('clicks', 0):,} clicks, "
+        f"CTR: {q.get('ctr', 0)*100:.2f}% "
+        f"({'🎯 Striking distance — optimize now' if 4 <= q.get('position', 100) <= 15 else ''})"
+        for i, q in enumerate(sorted(gsc_queries, key=lambda x: x.get('impressions', 0), reverse=True)[:15])
+    ) or "  - No Search Console queries found for this page."
 
     score = pagespeed_stats.get("performance_score")
     lcp = pagespeed_stats.get("lcp")
-    cls = pagespeed_stats.get("cls")
+    cls_v = pagespeed_stats.get("cls")
     inp = pagespeed_stats.get("inp")
+    fcp = pagespeed_stats.get("fcp")
 
-    prompt = (
-        "You are an elite SEO and Conversion Rate Optimization (CRO) copywriter.\n"
-        "We scraped the live text of a page using Jina Reader:\n"
-        "[START JINA MARKDOWN]\n"
-        f"{jina_markdown[:15000]}\n"  # Truncate to protect context window limits
-        "[END JINA MARKDOWN]\n\n"
-        "Here are the core search terms this page currently ranks for in Google Search Console:\n"
-        f"{q_lines}\n\n"
-        "Its mobile performance core web vitals are:\n"
-        f"- Performance Score: {score if score is not None else 'n/a'}%\n"
-        f"- Largest Contentful Paint (LCP): {f'{lcp}s' if lcp is not None else 'n/a'}\n"
-        f"- Cumulative Layout Shift (CLS): {cls if cls is not None else 'n/a'}\n"
-        f"- Interaction to Next Paint (INP): {f'{inp}ms' if inp is not None else 'n/a'}\n\n"
-        "Produce a detailed, structured, copy-paste-ready Optimization Blueprint:\n"
-        "1. Click-Optimized HTML Title Tag & Meta Description (within 60/160 character limits) containing the primary ranking keywords. "
-        "CRITICAL: Do NOT output raw unescaped HTML tags like <title> or <meta> directly in the markdown because the browser will hide them. "
-        "Either format them as plain text (e.g. 'Title Tag: Exploring Houses') or wrap them in escaped HTML code blocks (e.g. ````html ... ````).\n"
-        "2. Heading Restructuring: Suggest H1/H2 additions or updates to target semantic search query gaps.\n"
-        "3. Actionable Copy Additions: Draft the actual copy (paragraphs, lists, tables) to insert on the page to solve search intent better.\n"
-        "4. Page Speed & UX fixes: Map the Core Web Vitals issues (LCP/CLS/INP) to practical technical speed improvements.\n"
-        "Make it highly professional, clean, and ready for development. Output in clean Markdown."
+    # Word count of scraped content for context
+    word_count = len(jina_markdown.split()) if jina_markdown else 0
+    content_preview = jina_markdown[:18000]  # Give Grok the full page context up to limit
+    score_text = f"{score}%" if score is not None else "n/a"
+    lcp_text = f"{lcp}s" if lcp is not None else "n/a"
+    lcp_status = "🔴 POOR (>4s)" if lcp and lcp > 4 else "🟡 NEEDS WORK (>2.5s)" if lcp and lcp > 2.5 else "🟢 GOOD" if lcp else ""
+    cls_text = cls_v if cls_v is not None else "n/a"
+    cls_status = "🔴 POOR (>0.25)" if cls_v and cls_v > 0.25 else "🟡 NEEDS WORK (>0.1)" if cls_v and cls_v > 0.1 else "🟢 GOOD" if cls_v else ""
+    inp_text = f"{inp}ms" if inp is not None else "n/a"
+    inp_status = "🔴 POOR (>500ms)" if inp and inp > 500 else "🟡 NEEDS WORK (>200ms)" if inp and inp > 200 else "🟢 GOOD" if inp else ""
+    fcp_text = f"{fcp}s" if fcp is not None else "n/a"
+
+    prompt = """You are a world-class SEO specialist and conversion copywriter conducting a professional on-page SEO audit.
+
+You have access to:
+1. The live scraped content of the page (via Jina Reader)
+2. Real search performance data from Google Search Console
+3. Core Web Vitals from Google PageSpeed Insights
+
+---
+## LIVE PAGE CONTENT (Jina Reader Scrape — {word_count:,} words)
+{content_preview}
+---
+
+## GOOGLE SEARCH CONSOLE — RANKING QUERIES FOR THIS PAGE
+{q_lines}
+
+## PAGESPEED INSIGHTS (Mobile)
+- Performance Score: {score_text}
+- LCP (Largest Contentful Paint): {lcp_text} {lcp_status}
+- CLS (Cumulative Layout Shift): {cls_text} {cls_status}
+- INP (Interaction to Next Paint): {inp_text} {inp_status}
+- FCP (First Contentful Paint): {fcp_text}
+
+---
+
+## YOUR TASK: Produce a Complete On-Page SEO Optimization Blueprint
+
+Based on the actual page content scraped above, generate a **copy-paste-ready professional optimization blueprint** with these exact sections:
+
+### 1. 🏷️ Title Tag & Meta Description (Priority: Critical)
+Write 3 optimized title tag variants (≤60 chars) and 2 meta description variants (≤160 chars). Include the top GSC query keyword naturally. Format as:
+```
+Title Option A: [your title here]
+Title Option B: [your title here]
+Title Option C: [your title here]
+
+Meta Option A: [your meta description here]
+Meta Option B: [your meta description here]
+```
+
+### 2. 🔍 Keyword Gap Analysis
+- Identify which GSC ranking queries are NOT covered in the current H1/H2 headings (based on the scraped content)
+- Flag 3–5 semantic keyword gaps the page should target based on ranking intent
+- Show the specific heading this should be added under
+
+### 3. 📝 Heading Structure Rewrite
+- Propose a complete revised H1 → H2 → H3 heading hierarchy
+- The H1 must contain the primary keyword with highest impression volume
+- Add new H2 headings that cover the semantic keyword gaps
+- Format as a tree structure
+
+### 4. ✍️ Copy Additions (Write the actual copy)
+For each major gap or improvement area, write the actual paragraph, list, or table to add to the page. This should be:
+- Minimum 2 new content blocks (each 80–150 words)
+- Structured to match search intent of the top-impression queries
+- Naturally weaving in secondary keywords from the GSC list
+- Marked with [INSERT AFTER: "existing text anchor"]
+
+### 5. 🔗 Internal Linking Opportunities
+Based on the page's topic, suggest 3–5 specific internal link placements:
+- What anchor text to use
+- What type of destination page to link to (category, product, blog post)
+- Where in the existing content to place it (quote a few words of context)
+
+### 6. ⚡ Core Web Vitals & Speed Fix Roadmap
+Map each failing metric to a specific technical fix:
+- LCP issue → specific image/font/server cause + fix (lazy loading, preload, CDN, etc.)
+- CLS issue → specific layout shift cause + CSS fix
+- INP issue → specific JS blocking cause + optimization
+Prioritize by ranking impact.
+
+### 7. 📊 Schema Markup Recommendation
+Recommend the 1–2 most impactful Schema.org types for this page topic and write a complete ready-to-implement JSON-LD block.
+
+### 8. 🎯 Prioritized Action Plan
+A final 5-item ordered checklist ranked by expected SEO impact (high/medium/low), effort (1-3 weeks / 1 month / 3 months), and estimated ranking improvement.
+
+Output in clean, professional Markdown. Be specific — reference actual content from the page.""".format(
+        word_count=word_count,
+        content_preview=content_preview,
+        q_lines=q_lines,
+        score_text=score_text,
+        lcp_text=lcp_text,
+        lcp_status=lcp_status,
+        cls_text=cls_text,
+        cls_status=cls_status,
+        inp_text=inp_text,
+        inp_status=inp_status,
+        fcp_text=fcp_text,
     )
-    return reasoning(prompt, api_key, model, max_tokens=1000)
+
+    # Prefer Grok for rich, expert on-page SEO analysis
+    if grok_key:
+        return grok_reasoning(prompt, grok_key, max_tokens=2500)
+    return reasoning(prompt, api_key, model, max_tokens=1500)
 
 
 # ===========================================================================
 # Module 10 — Executive Summary & Roadmap Planner
 # ===========================================================================
-def module_executive_summary(results: dict, api_key: str | None, model: str) -> dict:
+def module_executive_summary(results: dict, api_key: str | None, model: str, grok_key: str | None = None) -> dict:
     m1 = results.get("organic", {})
     bullets = []
     bullets.append(
@@ -781,7 +1089,10 @@ def module_executive_summary(results: dict, api_key: str | None, model: str) -> 
         "   - Month 3: Content Expansion & Link Building (Unexplored Gems, cannibalization)\n\n"
         "Keep it professional, highly structured, and boardroom-ready."
     )
-    narrative = reasoning(prompt, api_key, model, max_tokens=800)
+    if grok_key:
+        narrative = grok_reasoning(prompt, grok_key, max_tokens=1000)
+    else:
+        narrative = reasoning(prompt, api_key, model, max_tokens=800)
     return {
         "title": "Module 10 — Executive Summary & Growth Strategy",
         "key_points": bullets,

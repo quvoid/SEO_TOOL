@@ -221,14 +221,33 @@ def _show_login_page() -> None:
 def require_login() -> None:
     """
     Gate function — call this at the top of app.py before rendering anything.
-    AUTH BYPASSED FOR TESTING — re-enable by restoring the original body.
+
+    Real Google OAuth gate. A local dev bypass is available ONLY when the
+    environment variable DEV_AUTH_BYPASS=1 is explicitly set — it is never
+    on by default, so a deployed instance is always protected.
     """
-    if "user" not in st.session_state:
+    # Already authenticated this session.
+    if "user" in st.session_state:
+        return
+
+    # Explicit, opt-in local dev bypass (never default-on).
+    if os.environ.get("DEV_AUTH_BYPASS") == "1":
         st.session_state["user"] = {
-            "email": "analytics.schbang@gmail.com",
-            "name": "Schbang Analytics",
+            "email": f"dev@{config.ALLOWED_DOMAIN}",
+            "name": "Developer (DEV_AUTH_BYPASS)",
             "picture": "",
         }
+        return
+
+    # Handle the OAuth redirect back from Google (?code=...).
+    code = st.query_params.get("code")
+    if code:
+        _handle_callback(code)
+        st.stop()
+
+    # Not authenticated — render the login page and halt.
+    _show_login_page()
+    st.stop()
 
 
 def get_user() -> dict:

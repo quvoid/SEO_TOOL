@@ -1,0 +1,11 @@
+node_modules
+dist
+.env.local
+.env
+*.log
+.vite
+
+# TS build artifacts (emitted by `tsc -b`)
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

@@ -333,11 +333,9 @@ def load_data(client_name: str, client_cfg_frozen: str, days: int) -> dict:
 
     if cfg.get("use_demo_data"):
         demo_ga4 = demo_data.ga4_page_metrics()
-        demo_sum = sum(r["sessions"] for r in demo_ga4)
-        demo_prev = sum(r["prev_sessions"] for r in demo_ga4)
         return {
             "ga4": demo_ga4,
-            "ga4_totals": {"current_total": demo_sum, "prev_total": demo_prev},
+            "ga4_totals": demo_data.ga4_totals(),
             "gsc": demo_data.gsc_page_metrics(),
             "gsc_queries": demo_data.gsc_top_queries_flat(),
             "gsc_queries_prev": demo_data.gsc_top_queries_flat_prev(),
@@ -507,7 +505,7 @@ def run_report(client_name: str, client_cfg: dict, days: int, model: str) -> dic
 
     with st.spinner("Module 7 — Declining Pages UX & Speed Audit…"):
         results["ux_audit"] = analysis.module_ux_audit(
-            data["ga4"], data["gsc"], data["clarity"], pagespeed_data, gk, model, crux_data=crux_data
+            data["ga4"], data["gsc"], data["clarity"], pagespeed_data, gk, model, crux_data=crux_data, grok_key=config.GROK_KEY
         )
     time.sleep(6)
 
@@ -524,7 +522,7 @@ def run_report(client_name: str, client_cfg: dict, days: int, model: str) -> dic
     time.sleep(6)
 
     with st.spinner("Module 10 — Executive Summary…"):
-        results["exec"] = analysis.module_executive_summary(results, gk, model)
+        results["exec"] = analysis.module_executive_summary(results, gk, model, grok_key=config.GROK_KEY)
 
     results["_meta"] = {
         "client": client_name,
@@ -534,6 +532,7 @@ def run_report(client_name: str, client_cfg: dict, days: int, model: str) -> dic
         "generated": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "analyst": user.get("name", ""),
     }
+    results["_ga4_totals"] = data.get("ga4_totals", {})
     return results
 
 
@@ -560,6 +559,58 @@ def _plotly_bar(series: pd.Series, color: str = "#6366f1", title: str = "") -> g
         font=dict(family="Inter"),
     )
     return fig
+
+
+def _format_seconds(seconds: float | int | None) -> str:
+    if seconds is None:
+        return "n/a"
+    total = int(round(float(seconds)))
+    minutes, secs = divmod(total, 60)
+    return f"{minutes}m {secs:02d}s" if minutes else f"{secs}s"
+
+
+def _format_rate(value: float | int | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{float(value) * 100:.2f}%"
+
+
+def _format_number(value: float | int | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{int(round(float(value))):,}"
+
+
+def _table_height(df: pd.DataFrame) -> int:
+    rows = len(df.index) if df is not None else 0
+    return max(96, 38 + (rows + 1) * 35)
+
+
+def _render_dataframe(
+    df: pd.DataFrame,
+    column_config: dict | None = None,
+    hide_index: bool = True,
+) -> None:
+    st.dataframe(
+        df,
+        width="stretch",
+        height=_table_height(df),
+        hide_index=hide_index,
+        column_config=column_config,
+    )
+
+
+def _trend_text(value, good_when_up: bool = True, suffix: str = "%", decimals: int = 1) -> str:
+    if value is None or pd.isna(value):
+        return "→ n/a"
+    val = float(value)
+    if abs(val) < 0.05:
+        return f"→ {val:.{decimals}f}{suffix}"
+    arrow = "↑" if val > 0 else "↓"
+    sign = "+" if val > 0 else ""
+    good = (val > 0 and good_when_up) or (val < 0 and not good_when_up)
+    marker = "Good" if good else "Watch"
+    return f"{arrow} {sign}{val:.{decimals}f}{suffix} · {marker}"
 
 
 # ---------------------------------------------------------------------------
@@ -680,6 +731,49 @@ def show_results(results: dict):
     </div>
     """
     st.html(kpi_strip)
+
+    ga4_totals = results.get("_ga4_totals", {})
+    ga4_cards = [
+        ("Sessions", _format_number(ga4_totals.get("current_total")), "S", "#6366f1"),
+        ("Engagement Rate", _format_rate(ga4_totals.get("engagement_rate")), "%", "#10b981"),
+        ("Total Users", _format_number(ga4_totals.get("total_users")), "U", "#0ea5e9"),
+        ("Returning Users", _format_number(ga4_totals.get("returning_users")), "R", "#f59e0b"),
+        ("New Users", _format_number(ga4_totals.get("new_users")), "+", "#22c55e"),
+        ("Avg Session Duration", _format_seconds(ga4_totals.get("avg_session_duration")), "T", "#8b5cf6"),
+        ("Active Users", _format_number(ga4_totals.get("active_users")), "A", "#14b8a6"),
+        ("Sessions / Active User", f"{float(ga4_totals.get('sessions_per_user') or 0):.2f}", "/", "#64748b"),
+        ("Bounce Rate", _format_rate(ga4_totals.get("bounce_rate")), "B", "#ef4444"),
+    ]
+    ga4_cards_html = "".join(
+        f"""
+        <div style="flex:1;min-width:150px;background:rgba(15,23,42,0.92);
+                    border:1px solid rgba(148,163,184,0.22);border-radius:8px;
+                    padding:14px 15px;box-shadow:0 10px 28px rgba(15,23,42,0.16);">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;
+                             border-radius:6px;background:{color};color:white;font-size:12px;font-weight:900;">{icon}</span>
+                <span style="font-size:10px;font-weight:800;color:#cbd5e1;text-transform:uppercase;
+                             letter-spacing:0.6px;line-height:1.2;">{label}</span>
+            </div>
+            <div style="font-size:23px;font-weight:900;color:white;letter-spacing:0;">{value}</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:4px;">Last {meta_days} days</div>
+        </div>
+        """
+        for label, value, icon, color in ga4_cards
+    )
+    st.html(
+        f"""
+        <div style="margin:-6px 0 24px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">
+                <div style="font-size:12px;font-weight:900;color:#334155;text-transform:uppercase;letter-spacing:1px;">
+                    GA4 Overview Metrics
+                </div>
+                <div style="font-size:11px;color:#64748b;">{meta_site}</div>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">{ga4_cards_html}</div>
+        </div>
+        """
+    )
 
     # ── Key Findings as styled chips ───────────────────────────────────────
     if ex.get("key_points"):
@@ -1158,6 +1252,87 @@ def show_results(results: dict):
         f"Analysed **{m6['total_queries_analysed']}** GSC queries to identify "
         "low-hanging organic search optimization opportunities."
     )
+
+    # 1. Branded vs Non-Branded Split
+    st.markdown("### 🏷️ Branded vs Non-Branded Query Split")
+    total_clicks = m6["brand_clicks"] + m6["non_brand_clicks"]
+    brand_pct = m6["brand_click_pct"]
+    non_brand_pct = 100.0 - brand_pct if total_clicks else 100.0
+
+    col_brand1, col_brand2 = st.columns(2)
+    with col_brand1:
+        st.metric("Branded Clicks", f"{m6['brand_clicks']:,}", f"{brand_pct:.1f}% of total")
+        if m6.get("brand_terms"):
+            st.caption(f"Brand terms detected: `{', '.join(m6['brand_terms'])}`")
+        else:
+            st.caption("No brand terms configured.")
+    with col_brand2:
+        st.metric("Non-Branded Clicks", f"{m6['non_brand_clicks']:,}", f"{non_brand_pct:.1f}% of total")
+        st.caption("Discovery search visibility")
+
+    st.progress(brand_pct / 100.0 if total_clicks else 0.0, text=f"Branded Clicks ({brand_pct:.1f}%) vs Non-Branded Clicks ({non_brand_pct:.1f}%)")
+
+    # 2. Striking Distance Opportunities & Position Distribution
+    st.markdown("### 🎯 Position Distribution & Striking Distance Buckets")
+    st.caption("Segmented queries by their average ranking position band on Google.")
+
+    tab_1_3, tab_4_10, tab_11_20, tab_21_50 = st.tabs([
+        f"🥇 Rank 1-3 ({len(m6['bands']['1-3'])})",
+        f"🎯 Rank 4-10 ({len(m6['bands']['4-10'])}) - Striking Distance",
+        f"📈 Rank 11-20 ({len(m6['bands']['11-20'])})",
+        f"🔍 Rank 21-50 ({len(m6['bands']['21-50'])})"
+    ])
+
+    def _render_band_df(queries_list):
+        if not queries_list:
+            st.info("No queries found in this position band.")
+            return
+        band_df = pd.DataFrame(queries_list)[["query", "clicks", "impressions", "ctr", "position"]]
+        band_df = band_df.rename(columns={
+            "query": "Query", "clicks": "Clicks", "impressions": "Impressions",
+            "ctr": "CTR", "position": "Position"
+        })
+        band_df["CTR"] = band_df["CTR"].apply(lambda val: f"{val * 100:.2f}%")
+        band_df["Position"] = band_df["Position"].round(1)
+        st.dataframe(band_df, width='stretch', hide_index=True)
+
+    with tab_1_3:
+        _render_band_df(m6['bands']['1-3'])
+    with tab_4_10:
+        st.caption("Keywords ranking on page 1 but not in top 3. High opportunity, responsive to on-page & link edits.")
+        _render_band_df(m6['bands']['4-10'])
+    with tab_11_20:
+        _render_band_df(m6['bands']['11-20'])
+    with tab_21_50:
+        _render_band_df(m6['bands']['21-50'])
+
+    # 3. New vs Lost Queries
+    st.markdown("### 🔄 New vs Lost Queries (Week-over-Week Diff)")
+    col_queries1, col_queries2 = st.columns(2)
+
+    with col_queries1:
+        st.subheader("🆕 New Queries")
+        st.caption("Keywords the site ranked for this period, but not in the prior period.")
+        if m6.get("new_queries"):
+            new_df = pd.DataFrame(m6["new_queries"])[["query", "clicks", "impressions", "position"]]
+            new_df = new_df.rename(columns={"query": "Query", "clicks": "Clicks", "impressions": "Impressions", "position": "Position"})
+            new_df["Position"] = new_df["Position"].round(1)
+            st.dataframe(new_df, width='stretch', hide_index=True)
+        else:
+            st.info("No new queries detected.")
+
+    with col_queries2:
+        st.subheader("⚠️ Lost Queries")
+        st.caption("Keywords the site ranked for in the prior period, but not in this period.")
+        if m6.get("lost_queries"):
+            lost_df = pd.DataFrame(m6["lost_queries"])[["query", "clicks", "impressions", "position"]]
+            lost_df = lost_df.rename(columns={"query": "Query", "clicks": "Clicks", "impressions": "Impressions", "position": "Position"})
+            lost_df["Position"] = lost_df["Position"].round(1)
+            st.dataframe(lost_df, width='stretch', hide_index=True)
+        else:
+            st.info("No lost queries detected.")
+
+    st.markdown("### 🚀 SEO Click Uplift Opportunities (Top 10)")
     if m6["opportunities"]:
         df = pd.DataFrame(m6["opportunities"])
         df = df.rename(columns={
@@ -1183,17 +1358,60 @@ def show_results(results: dict):
     _narrative(m6["narrative"])
     st.divider()
 
+    # ── Module 6b — Keyword Cannibalization ────────────────────────────────
+    m6b = results.get("cannibalization")
+    if m6b:
+        st.subheader("⚔️ " + m6b["title"])
+        st.caption("Detects when multiple pages rank for the same search query, diluting your organic authority.")
+
+        if m6b.get("conflicts"):
+            conflicts_data = []
+            for c in m6b["conflicts"]:
+                conflicts_data.append({
+                    "Query": c["query"],
+                    "Competitors": c["num_pages"],
+                    "Total Clicks": c["total_clicks"],
+                    "Total Impressions": c["total_impressions"],
+                    "Preferred Owner": c["winner"],
+                    "Owner Click Share": f"{c['winner_click_share']:.1f}%",
+                    "Severity": c["severity"]
+                })
+            st.dataframe(pd.DataFrame(conflicts_data), width='stretch', hide_index=True)
+
+            with st.expander("🔍 View Competing URLs Breakdown"):
+                for c in m6b["conflicts"][:5]:
+                    st.write(f"**Query:** `{c['query']}` (Impressions: {c['total_impressions']:,} · Severity: {c['severity']})")
+                    comp_df = pd.DataFrame(c["competing_pages"])[["page", "clicks", "impressions", "ctr", "position"]]
+                    comp_df = comp_df.rename(columns={"page": "URL Path", "clicks": "Clicks", "impressions": "Impressions", "ctr": "CTR", "position": "Position"})
+                    comp_df["CTR"] = comp_df["CTR"].apply(lambda v: f"{v*100:.2f}%")
+                    comp_df["Position"] = comp_df["Position"].round(1)
+                    st.dataframe(comp_df, width='stretch', hide_index=True)
+        else:
+            st.success("No keyword cannibalization conflicts detected.")
+
+        _narrative(m6b["narrative"])
+        st.divider()
+
     # ── Module 7 — Declining Pages UX & Speed Audit ────────────────────────
     m7 = results.get("ux_audit")
     if m7:
         st.subheader("🏥 " + m7["title"])
-        st.caption("Correlating search session losses with user frustration signals (dead/rage clicks) and mobile PageSpeed performance.")
+        st.caption("Correlating search session losses with user frustration signals (dead/rage clicks) and mobile PageSpeed performance (Lab vs CrUX Field data).")
         if m7.get("audit_rows"):
             df7 = pd.DataFrame(m7["audit_rows"])[[
                 "page", "sessions", "session_change_pct", "avg_position",
-                "pagespeed_score", "lcp", "dead_clicks", "rage_clicks", "risk_level"
+                "pagespeed_score", "lcp", "crux_lcp", "crux_cls", "crux_inp", "crux_rating",
+                "dead_clicks", "rage_clicks", "risk_level"
             ]]
-            df7.columns = ["Page Path", "Sessions", "Change %", "Avg Rank", "PageSpeed %", "LCP (s)", "Dead Clicks", "Rage Clicks", "UX Risk Level"]
+            df7.columns = [
+                "Page Path", "Sessions", "Change %", "Avg Rank", 
+                "Lab PageSpeed %", "Lab LCP (s)", "CrUX LCP (s)", "CrUX CLS", "CrUX INP (ms)", "CrUX Rating",
+                "Dead Clicks", "Rage Clicks", "UX Risk Level"
+            ]
+            df7["CrUX LCP (s)"] = df7["CrUX LCP (s)"].apply(lambda x: f"{x:.2f}s" if pd.notnull(x) and x != "" else "n/a")
+            df7["CrUX CLS"] = df7["CrUX CLS"].apply(lambda x: f"{x:.3f}" if pd.notnull(x) and x != "" else "n/a")
+            df7["CrUX INP (ms)"] = df7["CrUX INP (ms)"].apply(lambda x: f"{int(x)}ms" if pd.notnull(x) and x != "" else "n/a")
+            df7["CrUX Rating"] = df7["CrUX Rating"].apply(lambda x: str(x).upper().replace('_', ' ') if pd.notnull(x) and x != "" else "N/A")
             st.dataframe(df7, width='stretch', hide_index=True)
         _narrative(m7["narrative"])
         st.divider()
@@ -1438,6 +1656,29 @@ def show_results(results: dict):
             _narrative(m8["narrative"])
         st.divider()
 
+    # ── Module 9 — Indexation Health ──────────────────────────────────────
+    m9 = results.get("indexation")
+    if m9:
+        st.subheader("🌐 " + m9["title"])
+        st.caption("Sitemap and coverage health data directly from Search Console sitemaps endpoints.")
+
+        col_idx1, col_idx2, col_idx3 = st.columns(3)
+        with col_idx1:
+            st.metric("Indexation Rate", f"{m9['indexation_rate']:.1f}%", f"{m9['indexed_urls']:,} / {m9['submitted_urls']:,} URLs")
+        with col_idx2:
+            st.metric("Crawled, Not Indexed", f"{m9['crawled_not_indexed']:,}")
+        with col_idx3:
+            st.metric("Discovered, Not Indexed", f"{m9['discovered_not_indexed']:,}")
+
+        if m9.get("sitemaps"):
+            sm_df = pd.DataFrame(m9["sitemaps"])[["path", "submitted", "indexed"]]
+            sm_df = sm_df.rename(columns={"path": "Sitemap Path", "submitted": "Submitted URLs", "indexed": "Indexed URLs"})
+            sm_df["Index Rate"] = sm_df.apply(lambda r: f"{(r['Indexed URLs'] / r['Submitted URLs'] * 100):.1f}%" if r['Submitted URLs'] else "0.0%", axis=1)
+            st.dataframe(sm_df, width='stretch', hide_index=True)
+
+        _narrative(m9["narrative"])
+        st.divider()
+
     # ── Download ──────────────────────────────────────────────────────────
     st.divider()
     html = _build_html_report(results)
@@ -1487,7 +1728,7 @@ def _build_html_report(results: dict) -> str:
     )
 
     parts = [header]
-    order = ["exec", "organic", "journey", "funnel", "heatmap", "scroll", "keywords", "ux_audit", "hidden_insights"]
+    order = ["exec", "organic", "journey", "funnel", "heatmap", "scroll", "keywords", "cannibalization", "ux_audit", "hidden_insights", "indexation"]
     for key in order:
         r = results.get(key)
         if not r:
@@ -1497,43 +1738,128 @@ def _build_html_report(results: dict) -> str:
         parts.append(f"<div>{nar}</div>")
 
         # Keyword opportunities table
-        if key == "keywords" and r.get("opportunities"):
+        if key == "keywords":
+            # Branded vs Non-branded split & Striking distance buckets
+            brand_note = (
+                f"<div style='background:#f9fafb;padding:12px;border-radius:6px;margin:12px 0;border:1px solid #e5e7eb;font-size:13px;'>"
+                f"<b>Brand Dependency:</b> {r['brand_click_pct']:.1f}% branded clicks vs {100.0 - r['brand_click_pct']:.1f}% non-branded discovery clicks.<br>"
+                f"<b>Rank Position Distribution:</b> "
+                f"Rank 1-3 ({len(r['bands']['1-3'])} queries) · "
+                f"Rank 4-10 ({len(r['bands']['4-10'])} queries) · "
+                f"Rank 11-20 ({len(r['bands']['11-20'])} queries) · "
+                f"Rank 21-50 ({len(r['bands']['21-50'])} queries)"
+                f"</div>"
+            )
+            parts.append(brand_note)
+
+            # New vs Lost queries
+            if r.get("new_queries") or r.get("lost_queries"):
+                parts.append("<div style='display:flex;gap:15px;margin:15px 0;'>")
+                if r.get("new_queries"):
+                    parts.append(
+                        "<div style='flex:1;'><h4>🆕 Top New Queries</h4>"
+                        "<table><tr><th>Query</th><th>Impressions</th><th>Position</th></tr>"
+                    )
+                    for q in r["new_queries"][:5]:
+                        parts.append(f"<tr><td>{q['query']}</td><td>{q['impressions']:,}</td><td>{q['position']:.1f}</td></tr>")
+                    parts.append("</table></div>")
+                if r.get("lost_queries"):
+                    parts.append(
+                        "<div style='flex:1;'><h4>⚠️ Top Lost Queries</h4>"
+                        "<table><tr><th>Query</th><th>Impressions</th><th>Position</th></tr>"
+                    )
+                    for q in r["lost_queries"][:5]:
+                        parts.append(f"<tr><td>{q['query']}</td><td>{q['impressions']:,}</td><td>{q['position']:.1f}</td></tr>")
+                    parts.append("</table></div>")
+                parts.append("</div>")
+
+            # Flat opportunities table
+            if r.get("opportunities"):
+                parts.append("<h4>🚀 High-Uplift SEO Opportunities</h4>")
+                parts.append(
+                    "<table><tr>"
+                    "<th>Query</th><th>Position</th><th>Impressions</th>"
+                    "<th>Current Clicks</th><th>Click Uplift</th>"
+                    "</tr>"
+                )
+                for o in r["opportunities"]:
+                    parts.append(
+                        f"<tr><td>{o['query']}</td><td>{o['position']}</td>"
+                        f"<td>{o['impressions']:,}</td><td>{o['current_clicks']}</td>"
+                        f"<td><b>{o['click_uplift']:,}</b></td></tr>"
+                    )
+                parts.append("</table>")
+
+        # Cannibalization conflicts table
+        if key == "cannibalization" and r.get("conflicts"):
             parts.append(
                 "<table><tr>"
-                "<th>Query</th><th>Position</th><th>Impressions</th>"
-                "<th>Current Clicks</th><th>Click Uplift</th>"
+                "<th>Competing Query</th><th>Competitors</th><th>Total Clicks</th><th>Total Impressions</th><th>Preferred Owner</th><th>Severity</th>"
                 "</tr>"
             )
-            for o in r["opportunities"]:
+            for c in r["conflicts"]:
                 parts.append(
-                    f"<tr><td>{o['query']}</td><td>{o['position']}</td>"
-                    f"<td>{o['impressions']:,}</td><td>{o['current_clicks']}</td>"
-                    f"<td><b>{o['click_uplift']:,}</b></td></tr>"
+                    f"<tr><td>{c['query']}</td><td>{c['num_pages']}</td>"
+                    f"<td>{c['total_clicks']:,}</td><td>{c['total_impressions']:,}</td>"
+                    f"<td>{c['winner']}</td><td>{c['severity']}</td></tr>"
                 )
             parts.append("</table>")
 
-        # UX Audit table
+        # UX Audit table with CrUX
         if key == "ux_audit" and r.get("audit_rows"):
             parts.append(
                 "<table><tr>"
-                "<th>Page Path</th><th>Sessions</th><th>Change %</th><th>Avg Rank</th>"
-                "<th>PageSpeed</th><th>Dead Clicks</th><th>Rage Clicks</th><th>Risk Level</th>"
+                "<th>Page Path</th><th>Sessions</th><th>Change %</th><th>Rank</th>"
+                "<th>Lab LCP</th><th>CrUX LCP</th><th>CrUX CLS</th><th>CrUX INP</th><th>CrUX Rating</th>"
+                "<th>Dead Clicks</th><th>Rage Clicks</th><th>UX Risk</th>"
                 "</tr>"
             )
             for o in r["audit_rows"]:
                 pos_val = o.get("avg_position")
                 pos_display = f"{pos_val:.1f}" if pos_val is not None else "n/a"
-                score_val = o.get("pagespeed_score")
-                score_display = f"{score_val}%" if score_val is not None else "n/a"
+                lcp_val = o.get("lcp")
+                lcp_display = f"{lcp_val}s" if lcp_val is not None else "n/a"
+
+                clcp = o.get("crux_lcp")
+                clcp_disp = f"{clcp:.2f}s" if clcp is not None else "n/a"
+                ccls = o.get("crux_cls")
+                ccls_disp = f"{ccls:.3f}" if ccls is not None else "n/a"
+                cinp = o.get("crux_inp")
+                cinp_disp = f"{cinp}ms" if cinp is not None else "n/a"
+                crat = o.get("crux_rating")
+                crat_disp = str(crat).upper().replace('_', ' ') if crat else "N/A"
+
                 parts.append(
                     f"<tr><td>{o['page']}</td><td>{o['sessions']}</td>"
                     f"<td>{o['session_change_pct']:+.1f}%</td>"
                     f"<td>{pos_display}</td>"
-                    f"<td>{score_display}</td>"
+                    f"<td>{lcp_display}</td>"
+                    f"<td>{clcp_disp}</td><td>{ccls_disp}</td><td>{cinp_disp}</td><td>{crat_disp}</td>"
                     f"<td>{o['dead_clicks']}</td><td>{o['rage_clicks']}</td>"
                     f"<td>{o['risk_level']}</td></tr>"
                 )
             parts.append("</table>")
+
+        # Indexation health
+        if key == "indexation":
+            idx_summary = (
+                f"<div style='background:#f9fafb;padding:12px;border-radius:6px;margin:12px 0;border:1px solid #e5e7eb;font-size:13px;'>"
+                f"<b>Indexation Rate:</b> {r['indexation_rate']:.1f}% ({r['indexed_urls']:,} indexed / {r['submitted_urls']:,} submitted)<br>"
+                f"<b>Crawled but not indexed:</b> {r['crawled_not_indexed']:,}<br>"
+                f"<b>Discovered but not indexed:</b> {r['discovered_not_indexed']:,}"
+                f"</div>"
+            )
+            parts.append(idx_summary)
+            if r.get("sitemaps"):
+                parts.append(
+                    "<table><tr><th>Sitemap Path</th><th>Submitted URLs</th><th>Indexed URLs</th><th>Index Rate</th></tr>"
+                )
+                for s in r["sitemaps"]:
+                    rate_val = (s['indexed'] / s['submitted'] * 100) if s['submitted'] else 0.0
+                    parts.append(
+                        f"<tr><td>{s['path']}</td><td>{s['submitted']:,}</td><td>{s['indexed']:,}</td><td>{rate_val:.1f}%</td></tr>"
+                    )
+                parts.append("</table>")
 
     return (
         f"<!doctype html><html><head><meta charset='utf-8'>"
@@ -1618,7 +1944,7 @@ with tab_onpage:
 
             status.update(label="4. Generating optimization copywriting blueprint…")
             gk = config.GEMINI_KEY
-            blueprint = analysis.module_onpage_seo(jina_md, gsc_queries, ps_stats, gk, model)
+            blueprint = analysis.module_onpage_seo(jina_md, gsc_queries, ps_stats, gk, model, grok_key=config.GROK_KEY)
 
             status.update(label="Optimization complete!", state="complete")
 
