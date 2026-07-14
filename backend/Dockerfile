@@ -1,5 +1,6 @@
 # Backend container for Railway / Render / Cloud Run
-FROM python:3.11-slim
+# Python 3.12+ required: analysis.py uses PEP 701 nested f-strings.
+FROM python:3.12-slim
 
 WORKDIR /app
 

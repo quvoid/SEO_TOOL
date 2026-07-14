@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://REPLACE-WITH-YOUR-BACKEND-URL/:path*"
+      "destination": "https://schbang-analytics.onrender.com/:path*"
     }
   ]
 }
