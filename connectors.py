@@ -174,6 +174,7 @@ def fetch_ga4_page_metrics(
             Metric(name="bounceRate"),
             Metric(name="averageSessionDuration"),
             Metric(name="conversions"),
+            Metric(name="activeUsers"),
         ]
         dim_filter = None
         if organic_only:
@@ -205,6 +206,7 @@ def fetch_ga4_page_metrics(
                     "bounce_rate": float(v[2]),
                     "avg_session_duration": float(v[3]),
                     "conversions": int(float(v[4])),
+                    "active_users": int(float(v[5])),
                 }
             return out
 
@@ -221,6 +223,7 @@ def fetch_ga4_page_metrics(
                 "avg_session_duration": c["avg_session_duration"],
                 "conversions": c["conversions"],
                 "prev_conversions": p.get("conversions", 0),
+                "active_users": c.get("active_users", 0),
             })
         rows.sort(key=lambda r: r["sessions"], reverse=True)
         set_cached_value(cache_key, rows)

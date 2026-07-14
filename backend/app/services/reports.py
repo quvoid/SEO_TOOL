@@ -128,7 +128,7 @@ def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model:
         ("journey", lambda: analysis.module_user_journey(data["ga4"], data["clarity"], gk, model)),
         ("funnel", lambda: analysis.module_funnel(data["funnel"], gk, model)),
         ("heatmap", lambda: analysis.module_heatmap(data["clarity"], gk, model)),
-        ("scroll", lambda: analysis.module_scroll(data["clarity"], gk, model)),
+        ("scroll", lambda: analysis.module_scroll(data["clarity"], data["ga4"], gk, model)),
         ("keywords", lambda: analysis.module_keyword_intelligence(
             data["gsc_queries"], gk, model, prev_queries=data["gsc_queries_prev"], site_url=data["site"])),
         ("cannibalization", lambda: analysis.module_cannibalization(data["gsc_pairs"], gk, model)),
@@ -152,6 +152,7 @@ def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model:
         "end_date": end_date,
         "compare_start": prev_start,
         "compare_end": prev_end,
+        "clarity_available": bool(data.get("clarity")),
         "generated": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "analyst": analyst_name,
         "errors": data.get("errors", []),

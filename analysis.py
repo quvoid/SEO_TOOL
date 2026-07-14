@@ -548,29 +548,59 @@ def module_heatmap(clarity_rows, api_key, model):
 # ===========================================================================
 # Module 5 — Scroll Analysis
 # ===========================================================================
-def module_scroll(clarity_rows, api_key, model):
-    # Sort all pages by scroll depth ascending (worst first)
-    all_pages = sorted(
-        clarity_rows,
-        key=lambda c: c["avg_scroll_percent"]
-    )
-    low = [c for c in all_pages if c["avg_scroll_percent"] < 40]
-    
-    lines = "\n".join(
-        f"- {c['url']}: avg scroll depth {c['avg_scroll_percent']:.0f}% "
-        f"({c['total_sessions']} sessions)"
-        for c in low
-    ) or "- no pages below 40% scroll depth"
-    prompt = (
-        f"Pages where most users never scroll far (below 40% average depth):\n{lines}\n\n"
-        "Explain the likely cause (long intros, heavy banners, mismatched expectation) "
-        "and recommend content re-ordering to surface key sections / CTAs higher."
-    )
-    narrative = reasoning(prompt, api_key, model)
+def module_scroll(clarity_rows, ga4_rows, api_key, model):
+    """
+    Per-page scroll depth (Microsoft Clarity) joined with GA4 organic sessions +
+    active users. Works even when Clarity isn't connected for the client — in
+    that case scroll depth is null and the page list comes from GA4 alone.
+    """
+    clarity_available = bool(clarity_rows)
+    ga4_by_page = {_normalize_page(r.get("page_path", "")): r for r in (ga4_rows or [])}
+
+    pages = []
+    if clarity_available:
+        for c in clarity_rows:
+            g = ga4_by_page.get(_normalize_page(c.get("url", "")), {})
+            pages.append({
+                "page": c.get("url"),
+                "avg_scroll_percent": c.get("avg_scroll_percent"),
+                "sessions": g.get("sessions", c.get("total_sessions", 0)),
+                "active_users": g.get("active_users", 0),
+            })
+    else:
+        # No Clarity — fall back to GA4 pages; scroll depth unavailable.
+        for r in (ga4_rows or []):
+            pages.append({
+                "page": r.get("page_path"),
+                "avg_scroll_percent": None,
+                "sessions": r.get("sessions", 0),
+                "active_users": r.get("active_users", 0),
+            })
+
+    low = [p for p in pages if p["avg_scroll_percent"] is not None and p["avg_scroll_percent"] < 40]
+
+    if clarity_available and low:
+        lines = "\n".join(
+            f"- {p['page']}: avg scroll {p['avg_scroll_percent']:.0f}% ({p['sessions']} sessions)"
+            for p in low
+        )
+        prompt = (
+            f"Pages where most users never scroll far (below 40% average depth):\n{lines}\n\n"
+            "Explain the likely cause (long intros, heavy banners, mismatched expectation) "
+            "and recommend content re-ordering to surface key sections / CTAs higher."
+        )
+        narrative = reasoning(prompt, api_key, model)
+    elif not clarity_available:
+        narrative = ("_Microsoft Clarity is not connected for this client, so scroll-depth data "
+                     "is unavailable. Showing GA4 organic sessions and active users per page instead._")
+    else:
+        narrative = "No pages fall below 40% average scroll depth — engagement looks healthy."
+
     return {
         "title": "Module 5 — Scroll Analysis",
+        "pages": pages,
         "low_scroll_pages": low,
-        "all_pages": all_pages,
+        "clarity_available": clarity_available,
         "narrative": narrative,
     }
 

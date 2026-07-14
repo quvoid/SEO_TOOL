@@ -69,6 +69,17 @@ export const api = {
     }
   },
 
+  async history(): Promise<any[]> {
+    if (USE_MOCK) return [];
+    return req<any[]>("/reports");
+  },
+
+  async getReport(id: string): Promise<Results | null> {
+    if (USE_MOCK) return MOCK_RESULTS;
+    const r = await req<{ status: string; results?: Results }>(`/reports/${id}`);
+    return r.results || null;
+  },
+
   async onpage(url: string): Promise<{ url: string; blueprint: string; pagespeed?: Record<string, unknown> }> {
     if (USE_MOCK) {
       await delay(800);

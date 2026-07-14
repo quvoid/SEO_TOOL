@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { LayoutDashboard, Search, LogOut } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { LayoutDashboard, Search, LogOut, Download, History as HistoryIcon } from "lucide-react";
 import { USE_MOCK, api } from "../api";
 import { MODULE_ORDER, type Client, type Results, type User } from "../types";
 import { DateRange, type Range, presetRange } from "./DateRange";
@@ -19,13 +19,19 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
   const [status, setStatus] = useState<string>("");
   const [running, setRunning] = useState(false);
   const [tab, setTab] = useState<Tab>("exec");
+  const [history, setHistory] = useState<any[]>([]);
+
+  const loadHistory = useCallback(() => {
+    api.history().then(setHistory).catch(() => {});
+  }, []);
 
   useEffect(() => {
     api.clients().then((c) => {
       setClients(c);
       if (c[0]) setClientId(c[0].id);
     });
-  }, []);
+    loadHistory();
+  }, [loadHistory]);
 
   const activeClient = useMemo(() => clients.find((c) => c.id === clientId), [clients, clientId]);
 
@@ -36,6 +42,20 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
     try {
       const r = await api.runReport(clientId, range, setStatus);
       setResults(r);
+      loadHistory();
+    } catch (e) {
+      setStatus(`Error: ${(e as Error).message}`);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function openReport(id: string) {
+    setRunning(true); setResults(null); setTab("exec"); setStatus("Loading saved report…");
+    try {
+      const r = await api.getReport(id);
+      if (r) setResults(r);
+      else setStatus("This report has no saved results.");
     } catch (e) {
       setStatus(`Error: ${(e as Error).message}`);
     } finally {
@@ -69,6 +89,26 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
         <button className={`nav-item ${tab === "onpage" ? "active" : ""}`} onClick={() => setTab("onpage")}>
           <span className="ico"><Search size={17} /></span> On-Page SEO
         </button>
+
+        {history.length > 0 && (
+          <>
+            <div className="nav-label">History</div>
+            <div className="history-list">
+              {history.slice(0, 12).map((h) => (
+                <button className="hist-item" key={h.id} onClick={() => openReport(h.id)} disabled={h.status !== "done"}>
+                  <HistoryIcon size={13} className="hist-ico" />
+                  <span className="hist-body">
+                    <span className="hist-name">{h.client_name}</span>
+                    <span className="hist-meta">
+                      {h.start_date && h.end_date ? `${h.start_date} → ${h.end_date}` : (h.created_at || "").slice(0, 10)}
+                      {h.status !== "done" ? ` · ${h.status}` : ""}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         <div style={{ flex: 1, minHeight: 20 }} />
         <button className="nav-item" onClick={onLogout}>
@@ -136,7 +176,12 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
 
         {/* Executive Summary = one full-page report: exec + every module stacked */}
         {!running && results && tab === "exec" && (
-          <div>
+          <div className="report-page">
+            <div className="report-actions no-print">
+              <button className="btn ghost" onClick={() => window.print()}>
+                <Download size={15} /> &nbsp;Download PDF
+              </button>
+            </div>
             <ExecutiveSummary exec={results.exec} meta={results._meta} />
             {MODULE_ORDER.map((m) => (
               <div key={m.key as string} style={{ marginTop: 8 }}>

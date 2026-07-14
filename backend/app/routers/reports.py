@@ -113,6 +113,36 @@ def create_report(body: ReportCreate, background: BackgroundTasks,
     return ReportOut(id=report.id, client_id=client.id, status=report.status.value)
 
 
+@router.get("")
+def list_reports(user: User = Depends(get_current_user), db: DbSession = Depends(get_db),
+                 limit: int = 50):
+    """Recent finished/failed runs the user can access (for the History panel)."""
+    names = {c.id: c.display_name for c in db.query(Client).all()}
+    q = db.query(Report).order_by(Report.created_at.desc())
+    out = []
+    for r in q.limit(200):
+        client = db.get(Client, r.client_id)
+        if not client or not _authorized(db, user, client):
+            continue
+        params = {}
+        try:
+            params = json.loads(r.params_json)
+        except Exception:  # noqa: BLE001
+            pass
+        out.append({
+            "id": r.id,
+            "client_id": r.client_id,
+            "client_name": names.get(r.client_id, "—"),
+            "status": r.status.value,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "start_date": params.get("start_date"),
+            "end_date": params.get("end_date"),
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 @router.get("/{report_id}")
 def get_report(report_id: str, user: User = Depends(get_current_user),
                db: DbSession = Depends(get_db)):

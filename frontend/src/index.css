@@ -184,6 +184,10 @@ table.data th { color: var(--txt-faint); font-weight: 600; font-size: 10.5px; te
 table.data tr:last-child td { border-bottom: none; }
 .pos { color: var(--good); } .neg { color: var(--bad); }
 .table-scroll { overflow-x: auto; }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--txt-dim); }
+th.sortable.active { color: var(--accent); }
+.th-inner { display: inline-flex; align-items: center; gap: 4px; }
 
 .pill { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 6px; font-size: 11px; font-weight: 600; }
 .pill.demo { background: rgba(234, 179, 8, 0.14); color: var(--warn); }
@@ -195,6 +199,28 @@ table.data tr:last-child td { border-bottom: none; }
 
 .banner { padding: 9px 13px; border-radius: 9px; font-size: 12px; margin-bottom: 16px; border: 1px solid var(--line-soft); background: var(--bg-2); color: var(--txt-dim); }
 .banner code { color: var(--txt); }
+
+/* History panel */
+.history-list { display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; }
+.hist-item { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 9px; border: none; background: transparent; text-align: left; width: 100%; color: var(--txt-dim); }
+.hist-item:hover:not(:disabled) { background: var(--panel); color: var(--txt); }
+.hist-item:disabled { opacity: 0.45; cursor: default; }
+.hist-ico { flex-shrink: 0; color: var(--txt-faint); }
+.hist-body { display: flex; flex-direction: column; min-width: 0; }
+.hist-name { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-meta { font-size: 10.5px; color: var(--txt-faint); }
+
+/* Report actions + print */
+.report-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.btn.ghost { display: inline-flex; align-items: center; }
+@media print {
+  .sidebar, .controls, .topbar .user-chip, .banner, .no-print, .run-btn { display: none !important; }
+  .shell { grid-template-columns: 1fr; }
+  .main { padding: 0; }
+  body { background: #fff; color: #000; }
+  .card { border-color: #ddd; background: #fff; break-inside: avoid; }
+  .section-title, .card h2, .md strong, .stat .v { color: #000; }
+}
 
 /* ---------- Module visualizations ---------- */
 .section-title { font-size: 19px; font-weight: 800; letter-spacing: -0.4px; margin: 2px 0 14px; }

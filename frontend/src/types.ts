@@ -31,6 +31,9 @@ export interface ReportMeta {
   days?: number;
   start_date?: string | null;
   end_date?: string | null;
+  compare_start?: string | null;
+  compare_end?: string | null;
+  clarity_available?: boolean;
   generated?: string;
   analyst?: string;
   errors?: string[];

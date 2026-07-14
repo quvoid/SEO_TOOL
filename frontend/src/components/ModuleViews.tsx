@@ -1,7 +1,8 @@
 // Data-driven visual views per module. These bind to the STRUCTURED fields each
 // analysis module computes (not the AI narrative), so they render even when the
 // AI quota is exhausted. Falls back to the generic ModuleView for unknowns.
-import { Ghost, Gem as GemIcon, Frown } from "lucide-react";
+import { useState } from "react";
+import { Ghost, Gem as GemIcon, Frown, Info, ArrowUp, ArrowDown } from "lucide-react";
 import type { ModuleResult, Results } from "../types";
 import { cleanTitle } from "../util";
 import { Markdown } from "./Markdown";
@@ -33,6 +34,15 @@ function Narrative({ mod }: { mod: ModuleResult }) {
 
 function Title({ mod, fallback }: { mod: ModuleResult; fallback: string }) {
   return <h1 className="section-title">{cleanTitle(mod.title as string, fallback)}</h1>;
+}
+
+function ClarityFallback({ what }: { what: string }) {
+  return (
+    <div className="banner" style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+      <Info size={15} style={{ marginTop: 1, flexShrink: 0 }} />
+      <span>Microsoft Clarity isn't connected for this client, so {what} isn't available. Connect Clarity to unlock it.</span>
+    </div>
+  );
 }
 
 /* ---- Module 1: Organic Performance ---- */
@@ -133,11 +143,20 @@ function Funnel({ mod }: { mod: ModuleResult }) {
 }
 
 /* ---- Module 4: Heatmap / Click ---- */
-function Heatmap({ mod }: { mod: ModuleResult }) {
+function Heatmap({ mod, results }: { mod: ModuleResult; results: Results }) {
   const flagged = arr(mod.flagged);
+  const clarityOk = results._meta?.clarity_available !== false;
   const totalDead = flagged.reduce((s, c) => s + n(c.dead_clicks), 0);
   const totalRage = flagged.reduce((s, c) => s + n(c.rage_clicks), 0);
   const totalQuick = flagged.reduce((s, c) => s + n(c.quickback_clicks), 0);
+  if (!clarityOk) {
+    return (
+      <div>
+        <Title mod={mod} fallback="Heatmap / Click" />
+        <ClarityFallback what="click-frustration (dead/rage clicks) data" />
+      </div>
+    );
+  }
   return (
     <div>
       <Title mod={mod} fallback="Heatmap / Click" />
@@ -177,25 +196,63 @@ function Heatmap({ mod }: { mod: ModuleResult }) {
 }
 
 /* ---- Module 5: Scroll ---- */
+type ScrollKey = "avg_scroll_percent" | "sessions" | "active_users";
 function Scroll({ mod }: { mod: ModuleResult }) {
-  const pages = (arr(mod.all_pages).length ? arr(mod.all_pages) : arr(mod.low_scroll_pages)).slice(0, 10);
+  const pages = arr(mod.pages).length ? arr(mod.pages) : arr(mod.all_pages);
+  const clarityOk = mod.clarity_available !== false && pages.some((p) => p.avg_scroll_percent != null);
+  const [sortKey, setSortKey] = useState<ScrollKey>(clarityOk ? "avg_scroll_percent" : "sessions");
+  const [dir, setDir] = useState<"asc" | "desc">(clarityOk ? "asc" : "desc");
+
+  const sorted = [...pages].sort((a, b) => {
+    const av = n(a[sortKey]), bv = n(b[sortKey]);
+    return dir === "asc" ? av - bv : bv - av;
+  }).slice(0, 25);
+
+  const clickSort = (k: ScrollKey) => {
+    if (sortKey === k) setDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(k); setDir(k === "avg_scroll_percent" ? "asc" : "desc"); }
+  };
+  const Arrow = () => (dir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />);
+  const Th = ({ k, children }: { k: ScrollKey; children: any }) => (
+    <th className={`sortable ${sortKey === k ? "active" : ""}`} onClick={() => clickSort(k)}>
+      <span className="th-inner">{children} {sortKey === k && <Arrow />}</span>
+    </th>
+  );
+
   return (
     <div>
       <Title mod={mod} fallback="Scroll Analysis" />
-      <Card title="Average scroll depth" sub="Pages below 40% mean most users never reach mid-page CTAs">
-        <div className="scroll-list">
-          {pages.map((p, i) => {
-            const d = n(p.avg_scroll_percent);
-            const color = d < 40 ? "var(--bad)" : d < 65 ? "var(--warn)" : "var(--good)";
-            return (
-              <div className="scroll-row" key={i}>
-                <div className="scroll-path" title={p.url}>{shortUrl(p.url)}</div>
-                <Progress pct={d} color={color} />
-                <div className="scroll-val" style={{ color }}>{fmt(d)}%</div>
-              </div>
-            );
-          })}
-        </div>
+      {!clarityOk && <ClarityFallback what="scroll-depth data" />}
+      <Card title="Pages by engagement" sub="Click a column to sort ascending / descending">
+        <div className="table-scroll"><table className="data">
+          <thead><tr>
+            <th>Page</th>
+            <Th k="avg_scroll_percent">Scroll depth</Th>
+            <Th k="sessions">Organic sessions</Th>
+            <Th k="active_users">Active users</Th>
+          </tr></thead>
+          <tbody>
+            {sorted.map((p, i) => {
+              const d = p.avg_scroll_percent;
+              const color = d == null ? "var(--txt-faint)" : d < 40 ? "var(--bad)" : d < 65 ? "var(--warn)" : "var(--good)";
+              return (
+                <tr key={i}>
+                  <td title={p.page}>{shortUrl(p.page)}</td>
+                  <td style={{ minWidth: 160 }}>
+                    {d == null ? <span className="muted">—</span> : (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ flex: 1 }}><Progress pct={n(d)} color={color} /></div>
+                        <span style={{ color, fontWeight: 700 }}>{fmt(d)}%</span>
+                      </div>
+                    )}
+                  </td>
+                  <td>{fmt(p.sessions)}</td>
+                  <td>{fmt(p.active_users)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table></div>
       </Card>
       <Narrative mod={mod} />
     </div>
