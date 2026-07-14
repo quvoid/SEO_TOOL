@@ -1,11 +1,19 @@
 // Data-driven visual views per module. These bind to the STRUCTURED fields each
 // analysis module computes (not the AI narrative), so they render even when the
 // AI quota is exhausted. Falls back to the generic ModuleView for unknowns.
+import { Ghost, Gem as GemIcon, Frown } from "lucide-react";
 import type { ModuleResult, Results } from "../types";
 import { cleanTitle } from "../util";
 import { Markdown } from "./Markdown";
 import { ModuleView } from "./ModuleView";
 import { Card, Delta, Donut, HBars, Progress, ScoreRing, StatTiles, fmt } from "./viz";
+
+const pct = (v: unknown) => `${(Number(v) * 100 || 0).toFixed(1)}%`;
+const dur = (s: unknown) => {
+  const t = Number(s) || 0;
+  const m = Math.floor(t / 60);
+  return `${m}m ${Math.round(t - m * 60)}s`;
+};
 
 const arr = (v: unknown): any[] => (Array.isArray(v) ? v : []);
 const n = (v: unknown) => (typeof v === "number" ? v : Number(v) || 0);
@@ -28,9 +36,11 @@ function Title({ mod, fallback }: { mod: ModuleResult; fallback: string }) {
 }
 
 /* ---- Module 1: Organic Performance ---- */
-function Organic({ mod }: { mod: ModuleResult }) {
+function Organic({ mod, results }: { mod: ModuleResult; results: Results }) {
   const gainers = arr(mod.gainers), losers = arr(mod.losers);
   const delta = n(mod.overall_delta_pct);
+  const t = (results._ga4_totals || {}) as Record<string, unknown>;
+  const hasTotals = t.total_users != null || t.engagement_rate != null;
   const PageCol = ({ items, tone }: { items: any[]; tone: "up" | "down" }) => (
     <div className="pc-grid">
       {items.slice(0, 6).map((p, i) => (
@@ -57,6 +67,20 @@ function Organic({ mod }: { mod: ModuleResult }) {
           { k: "Change", v: <Delta value={delta} />, cls: delta >= 0 ? "good" : "bad" },
         ]} />
       </Card>
+      {hasTotals && (
+        <Card title="Audience metrics" sub="GA4 · selected period (organic)">
+          <StatTiles tiles={[
+            { k: "Total users", v: fmt(t.total_users) },
+            { k: "New users", v: fmt(t.new_users) },
+            { k: "Returning users", v: fmt(t.returning_users) },
+            { k: "Active users", v: fmt(t.active_users) },
+            { k: "Engagement rate", v: pct(t.engagement_rate) },
+            { k: "Bounce rate", v: pct(t.bounce_rate) },
+            { k: "Avg. session", v: dur(t.avg_session_duration) },
+            { k: "Sessions / active user", v: (Number(t.sessions_per_user) || 0).toFixed(2) },
+          ]} />
+        </Card>
+      )}
       <div className="two-col">
         <Card title={`▲ Growing pages (${gainers.length})`}><PageCol items={gainers} tone="up" /></Card>
         <Card title={`▼ Declining pages (${losers.length})`}><PageCol items={losers} tone="down" /></Card>
@@ -111,27 +135,38 @@ function Funnel({ mod }: { mod: ModuleResult }) {
 /* ---- Module 4: Heatmap / Click ---- */
 function Heatmap({ mod }: { mod: ModuleResult }) {
   const flagged = arr(mod.flagged);
+  const totalDead = flagged.reduce((s, c) => s + n(c.dead_clicks), 0);
+  const totalRage = flagged.reduce((s, c) => s + n(c.rage_clicks), 0);
+  const totalQuick = flagged.reduce((s, c) => s + n(c.quickback_clicks), 0);
   return (
     <div>
       <Title mod={mod} fallback="Heatmap / Click" />
+      <Card>
+        <StatTiles tiles={[
+          { k: "Pages with friction", v: fmt(flagged.length) },
+          { k: "Dead clicks", v: fmt(totalDead), cls: "bad" },
+          { k: "Rage clicks", v: fmt(totalRage), cls: "bad" },
+          { k: "Quick-backs", v: fmt(totalQuick), cls: "bad" },
+        ]} />
+      </Card>
       <Card title="Click frustration by page" sub="Dead clicks (non-interactive) + rage clicks (repeated frustration)">
         <HBars
           data={flagged.slice(0, 8).map((c) => ({
-            label: shortUrl(c.url), value: n(c.dead_clicks) + n(c.rage_clicks),
-            sub: `${n(c.dead_clicks)} dead / ${n(c.rage_clicks)} rage`,
+            label: shortUrl(c.url), value: n(c.dead_clicks) + n(c.rage_clicks) * 2,
+            sub: `${n(c.dead_clicks)} dead · ${n(c.rage_clicks)} rage`,
           }))}
           color="var(--bad)"
           fmtValue={() => ""}
         />
       </Card>
-      <div className="pc-grid">
+      <div className="two-col">
         {flagged.slice(0, 6).map((c, i) => (
-          <div className="pcard down" key={i}>
-            <div className="pcard-path">{shortUrl(c.url)}</div>
-            <div className="pcard-metrics">
-              <span className="neg">{n(c.dead_clicks)} dead</span>
-              <span className="neg">{n(c.rage_clicks)} rage</span>
-              <span className="muted">{fmt(c.total_sessions)} sess</span>
+          <div className="card" key={i} style={{ marginBottom: 0 }}>
+            <div className="pcard-path" title={c.url}>{shortUrl(c.url)}</div>
+            <div className="stat-row" style={{ marginTop: 12 }}>
+              <div className="stat"><div className="k">Dead clicks</div><div className="v bad">{fmt(c.dead_clicks)}</div></div>
+              <div className="stat"><div className="k">Rage clicks</div><div className="v bad">{fmt(c.rage_clicks)}</div></div>
+              <div className="stat"><div className="k">Sessions</div><div className="v">{fmt(c.total_sessions)}</div></div>
             </div>
           </div>
         ))}
@@ -294,16 +329,20 @@ function UxAudit({ mod }: { mod: ModuleResult }) {
 
 /* ---- Module 8: Hidden Insights ---- */
 function Hidden({ mod }: { mod: ModuleResult }) {
-  const groups: [string, string, any[], string][] = [
-    ["🧟 Zombie Pages", "High impressions, low CTR — rewrite titles/meta", arr(mod.zombies), "warn"],
-    ["💎 Unexplored Gems", "High engagement, low visibility — needs SEO push", arr(mod.gems), "up"],
-    ["🐄 Friction Cash Cows", "Convert but frustrate — needs CRO fixes", arr(mod.cows), "down"],
+  const groups: [any, string, string, any[], string][] = [
+    [Ghost, "Zombie Pages", "High impressions, low CTR — rewrite titles/meta", arr(mod.zombies), "warn"],
+    [GemIcon, "Unexplored Gems", "High engagement, low visibility — needs SEO push", arr(mod.gems), "up"],
+    [Frown, "Friction Cash Cows", "Convert but frustrate — needs CRO fixes", arr(mod.cows), "down"],
   ];
   return (
     <div>
       <Title mod={mod} fallback="Hidden Growth Insights" />
-      {groups.map(([t, sub, items, tone]) => (
-        <Card title={`${t} (${items.length})`} sub={sub} key={t}>
+      {groups.map(([Icon, t, sub, items, tone]) => (
+        <div className="card" key={t}>
+          <h2 style={{ fontSize: 15, display: "flex", alignItems: "center", gap: 8 }}>
+            <Icon size={16} /> {t} ({items.length})
+          </h2>
+          <div className="muted" style={{ marginBottom: 4 }}>{sub}</div>
           <div className="pc-grid">
             {items.slice(0, 6).map((p: any, i: number) => (
               <div className={`pcard ${tone}`} key={i}>
@@ -318,7 +357,7 @@ function Hidden({ mod }: { mod: ModuleResult }) {
             ))}
             {items.length === 0 && <div className="muted">None found.</div>}
           </div>
-        </Card>
+        </div>
       ))}
       <Narrative mod={mod} />
     </div>
@@ -375,7 +414,7 @@ function Indexation({ mod }: { mod: ModuleResult }) {
   );
 }
 
-const VIEWS: Record<string, (p: { mod: ModuleResult }) => JSX.Element> = {
+const VIEWS: Record<string, (p: { mod: ModuleResult; results: Results }) => JSX.Element> = {
   organic: Organic, funnel: Funnel, heatmap: Heatmap, scroll: Scroll,
   keywords: Keywords, cannibalization: Cannibalization, ux_audit: UxAudit,
   hidden_insights: Hidden, indexation: Indexation,
@@ -385,5 +424,5 @@ export function ModuleRouter({ tab, results, label }: { tab: string; results: Re
   const mod = results[tab] as ModuleResult | undefined;
   if (!mod) return <div className="empty">No data for this module.</div>;
   const View = VIEWS[tab];
-  return View ? <View mod={mod} /> : <ModuleView mod={mod} label={label} />;
+  return View ? <View mod={mod} results={results} /> : <ModuleView mod={mod} label={label} />;
 }

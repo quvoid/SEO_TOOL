@@ -54,16 +54,21 @@ export interface Results {
   [k: string]: unknown;
 }
 
+import {
+  TrendingUp, Route, Filter, MousePointerClick, ScrollText, KeyRound,
+  Swords, Zap, Gem, FileStack, type LucideIcon,
+} from "lucide-react";
+
 // The ordered module tabs — mirrors the Streamlit module structure exactly.
-export const MODULE_ORDER: { key: keyof Results; label: string; icon: string }[] = [
-  { key: "organic", label: "Organic Performance", icon: "📈" },
-  { key: "journey", label: "User Journey", icon: "🧭" },
-  { key: "funnel", label: "Funnel Drop-off", icon: "🔻" },
-  { key: "heatmap", label: "Heatmap / Click", icon: "🖱️" },
-  { key: "scroll", label: "Scroll Analysis", icon: "📜" },
-  { key: "keywords", label: "Keyword Intelligence", icon: "🔑" },
-  { key: "cannibalization", label: "Cannibalization", icon: "⚔️" },
-  { key: "ux_audit", label: "UX & Speed Audit", icon: "⚡" },
-  { key: "hidden_insights", label: "Hidden Insights", icon: "💎" },
-  { key: "indexation", label: "Indexation Health", icon: "🗂️" },
+export const MODULE_ORDER: { key: keyof Results; label: string; Icon: LucideIcon }[] = [
+  { key: "organic", label: "Organic Performance", Icon: TrendingUp },
+  { key: "journey", label: "User Journey", Icon: Route },
+  { key: "funnel", label: "Funnel Drop-off", Icon: Filter },
+  { key: "heatmap", label: "Heatmap / Click", Icon: MousePointerClick },
+  { key: "scroll", label: "Scroll Analysis", Icon: ScrollText },
+  { key: "keywords", label: "Keyword Intelligence", Icon: KeyRound },
+  { key: "cannibalization", label: "Cannibalization", Icon: Swords },
+  { key: "ux_audit", label: "UX & Speed Audit", Icon: Zap },
+  { key: "hidden_insights", label: "Hidden Insights", Icon: Gem },
+  { key: "indexation", label: "Indexation Health", Icon: FileStack },
 ];

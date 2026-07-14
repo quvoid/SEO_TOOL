@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
+import { LayoutDashboard, Search, LogOut } from "lucide-react";
 import { USE_MOCK, api } from "../api";
 import { MODULE_ORDER, type Client, type Results, type User } from "../types";
 import { DateRange, type Range, presetRange } from "./DateRange";
 import { ExecutiveSummary } from "./ExecutiveSummary";
 import { SchbangLogo } from "./Logo";
 import { ModuleRouter } from "./ModuleViews";
+import { OnPage } from "./OnPage";
 import { Select } from "./Select";
 
 type Tab = "exec" | (typeof MODULE_ORDER)[number]["key"] | "onpage";
@@ -44,11 +46,11 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
   return (
     <div className="shell">
       <aside className="sidebar">
-        <SchbangLogo />
+        <SchbangLogo size={38} />
 
         <div className="nav-label">Report</div>
         <button className={`nav-item ${tab === "exec" ? "active" : ""}`} onClick={() => setTab("exec")}>
-          <span className="ico">◆</span> Executive Summary
+          <span className="ico"><LayoutDashboard size={17} /></span> Executive Summary
         </button>
 
         <div className="nav-label">Modules</div>
@@ -59,18 +61,18 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
             onClick={() => setTab(m.key as Tab)}
             disabled={!results}
           >
-            <span className="ico">{m.icon}</span> {m.label}
+            <span className="ico"><m.Icon size={17} /></span> {m.label}
           </button>
         ))}
 
         <div className="nav-label">Tools</div>
         <button className={`nav-item ${tab === "onpage" ? "active" : ""}`} onClick={() => setTab("onpage")}>
-          <span className="ico">◇</span> On-Page SEO
+          <span className="ico"><Search size={17} /></span> On-Page SEO
         </button>
 
         <div style={{ flex: 1, minHeight: 20 }} />
         <button className="nav-item" onClick={onLogout}>
-          <span className="ico">→</span> Sign out
+          <span className="ico"><LogOut size={17} /></span> Sign out
         </button>
       </aside>
 
@@ -91,35 +93,39 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
 
         {USE_MOCK && (
           <div className="banner">
-            Demo mode — sample data (no backend). Set <code>VITE_USE_MOCK=false</code> for the live API.
+            Demo mode — sample data (no backend). Set <code>VITE_USE_MOCK=true</code> off for the live API.
           </div>
         )}
 
-        <div className="controls">
-          <div className="field client-field">
-            <label>Client</label>
-            <Select
-              value={clientId}
-              onChange={setClientId}
-              options={clients.map((c) => ({ value: c.id, label: c.display_name }))}
-              placeholder="Choose client"
-            />
-          </div>
-          <div className="field range-field">
-            <label>Date range</label>
-            <DateRange value={range} onChange={setRange} />
-          </div>
-          <button className="btn sm run-btn" onClick={run} disabled={running || !clientId}>
-            {running ? <><span className="spinner" />&nbsp; Running…</> : "Run Report"}
-          </button>
-        </div>
-        {activeClient && (
-          <div style={{ marginBottom: 18 }}>
-            <span className={`pill ${activeClient.use_demo_data ? "demo" : "live"}`}>
-              {activeClient.use_demo_data ? "DEMO" : "LIVE"}
-              {activeClient.ga4_property_id_masked ? ` · GA4 ${activeClient.ga4_property_id_masked}` : ""}
-            </span>
-          </div>
+        {tab !== "onpage" && (
+          <>
+            <div className="controls">
+              <div className="field client-field">
+                <label>Client</label>
+                <Select
+                  value={clientId}
+                  onChange={setClientId}
+                  options={clients.map((c) => ({ value: c.id, label: c.display_name }))}
+                  placeholder="Choose client"
+                />
+              </div>
+              <div className="field range-field">
+                <label>Date range</label>
+                <DateRange value={range} onChange={setRange} />
+              </div>
+              <button className="btn sm run-btn" onClick={run} disabled={running || !clientId}>
+                {running ? <><span className="spinner" />&nbsp; Running…</> : "Run Report"}
+              </button>
+            </div>
+            {activeClient && (
+              <div style={{ marginBottom: 18 }}>
+                <span className={`pill ${activeClient.use_demo_data ? "demo" : "live"}`}>
+                  {activeClient.use_demo_data ? "DEMO" : "LIVE"}
+                  {activeClient.ga4_property_id_masked ? ` · GA4 ${activeClient.ga4_property_id_masked}` : ""}
+                </span>
+              </div>
+            )}
+          </>
         )}
 
         {running && <div className="empty"><span className="spinner" />&nbsp; {status}</div>}
@@ -128,21 +134,23 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
           <div className="empty">Choose a client and click <strong>Run Report</strong> to generate the 10-module analysis.</div>
         )}
 
-        {!running && results && tab === "exec" && <ExecutiveSummary exec={results.exec} meta={results._meta} />}
+        {/* Executive Summary = one full-page report: exec + every module stacked */}
+        {!running && results && tab === "exec" && (
+          <div>
+            <ExecutiveSummary exec={results.exec} meta={results._meta} />
+            {MODULE_ORDER.map((m) => (
+              <div key={m.key as string} style={{ marginTop: 8 }}>
+                <ModuleRouter tab={String(m.key)} results={results} label={m.label} />
+              </div>
+            ))}
+          </div>
+        )}
 
         {!running && results && tab !== "exec" && tab !== "onpage" && (
           <ModuleRouter tab={String(tab)} results={results} label={MODULE_ORDER.find((m) => m.key === tab)?.label || String(tab)} />
         )}
 
-        {tab === "onpage" && (
-          <div className="card">
-            <h2>On-Page SEO Optimizer</h2>
-            <p className="muted">
-              Enter a URL to generate an AI on-page optimization blueprint (title/meta, headings, content gaps,
-              Core Web Vitals). Wired to <code>POST /onpage</code>.
-            </p>
-          </div>
-        )}
+        {tab === "onpage" && <OnPage />}
       </main>
     </div>
   );

@@ -1,7 +1,22 @@
-// Schbang brand mark — a clean, flat, multi-colour hash + wordmark.
-// (Simplified geometric take on the official logo; swap in the official SVG/PNG
-//  at src/assets/ later if you want a pixel-perfect asset.)
-export function SchbangMark({ size = 28 }: { size?: number }) {
+// Schbang brand mark. Prefers /schbang-logo.png (drop the official PNG into
+// frontend/public/schbang-logo.png). Falls back to a geometric SVG hash if the
+// image isn't present.
+import { useState } from "react";
+
+function SchbangMark({ size = 34 }: { size?: number }) {
+  const [imgOk, setImgOk] = useState(true);
+  if (imgOk) {
+    return (
+      <img
+        src="/schbang-logo.png"
+        alt="Schbang"
+        width={size}
+        height={size}
+        style={{ display: "block", objectFit: "contain", borderRadius: 6 }}
+        onError={() => setImgOk(false)}
+      />
+    );
+  }
   return (
     <svg width={size} height={size} viewBox="0 0 100 100" aria-label="Schbang" role="img">
       <g transform="skewX(-11)" strokeLinecap="round" strokeWidth="12" fill="none">
@@ -15,11 +30,11 @@ export function SchbangMark({ size = 28 }: { size?: number }) {
   );
 }
 
-export function SchbangLogo({ compact = false }: { compact?: boolean }) {
+export function SchbangLogo({ size = 34, showWord = true }: { size?: number; showWord?: boolean }) {
   return (
     <div className="logo">
-      <SchbangMark size={compact ? 26 : 30} />
-      {!compact && (
+      <SchbangMark size={size} />
+      {showWord && (
         <span className="logo-word">
           Schbang<span className="logo-dot">.</span>
         </span>

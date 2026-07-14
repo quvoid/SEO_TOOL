@@ -68,4 +68,16 @@ export const api = {
       if (r.status === "failed") throw new Error(r.error || "Report failed");
     }
   },
+
+  async onpage(url: string): Promise<{ url: string; blueprint: string; pagespeed?: Record<string, unknown> }> {
+    if (USE_MOCK) {
+      await delay(800);
+      return {
+        url,
+        blueprint: `## On-Page SEO Blueprint for ${url}\n\n### Title & Meta\n- Rewrite the title to lead with the primary keyword.\n- Meta description under 155 chars with a clear CTA.\n\n### Headings\n- Use a single H1; add H2s for each subtopic.\n\n### Core Web Vitals\n- Compress the hero image; defer non-critical JS.`,
+        pagespeed: { performance_score: 62, lcp: 3.1, cls: 0.08 },
+      };
+    }
+    return req("/onpage", { method: "POST", body: JSON.stringify({ url }) });
+  },
 };

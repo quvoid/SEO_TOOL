@@ -1078,16 +1078,26 @@ def module_executive_summary(results: dict, api_key: str | None, model: str, gro
         bullets.append(f"CRO Opportunity: '{m8['cows'][0]['page']}' converts leads but has high frustration ({m8['cows'][0]['dead_clicks']} dead clicks).")
 
     prompt = (
-        "Write a tight executive summary for stakeholders based on these findings:\n"
+        "You are a senior SEO growth strategist writing a boardroom-ready summary "
+        "based ONLY on these findings:\n"
         + "\n".join(f"- {b}" for b in bullets)
-        + "\n\nProduce:\n"
-        "1. A one-line executive health verdict.\n"
-        "2. The top 3 prioritised actions with expected business impact, ordered by ROI.\n"
-        "3. A structured 3-Month Growth Strategy Calendar:\n"
-        "   - Month 1: Speed & Immediate CRO Fixes (Core Web Vitals, rage/dead clicks)\n"
-        "   - Month 2: Low-Hanging SEO Wins (Zombie page titles, ranking positions 4-20)\n"
-        "   - Month 3: Content Expansion & Link Building (Unexplored Gems, cannibalization)\n\n"
-        "Keep it professional, highly structured, and boardroom-ready."
+        + "\n\nSTRICT RULES:\n"
+        "- Do NOT invent revenue or currency amounts. Never fabricate specific figures.\n"
+        "- Express expected impact as an estimated % change in organic sessions, clicks, "
+        "or conversions, plus a qualitative ROI rating (High / Medium / Low) and effort "
+        "(Low / Medium / High). Only mention money if it is clearly grounded, and if so use "
+        "Indian Rupees (₹), labelled explicitly as a rough estimate.\n"
+        "- Be concrete: name the exact page path or query and the specific change to make.\n\n"
+        "Write these markdown sections (use '###' headings exactly as shown):\n"
+        "### Executive Health Verdict\n"
+        "One or two sentences on overall organic health.\n"
+        "### Prioritised Actions\n"
+        "The top 3 actions ordered by ROI. For each action give: the specific fix, the "
+        "expected effect (% sessions/clicks/conversions), Effort, and ROI rating.\n"
+        "### Month 1 — Speed & CRO Fixes\n"
+        "### Month 2 — Low-Hanging SEO Wins\n"
+        "### Month 3 — Content Expansion & Link Building\n"
+        "Under each month, give 2-4 concrete bullet tasks tied directly to the findings above."
     )
     if grok_key:
         narrative = grok_reasoning(prompt, grok_key, max_tokens=1000)
