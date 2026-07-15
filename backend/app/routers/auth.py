@@ -57,13 +57,22 @@ async def callback(request: Request, response: Response, db: DbSession = Depends
     email = (info.get("email") or "").lower()
     domain = email.split("@")[-1] if "@" in email else ""
 
-    if domain != _settings.auth_allowed_domain.lower():
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied: domain not allowed")
-
     allowlisted = email in _settings.admin_email_set()
     user = db.query(User).filter(User.email == email).one_or_none()
+
+    # Login is allowed if the email is (a) on the company domain, (b) in the admin
+    # allowlist, or (c) an active member an admin already added. This lets admins
+    # onboard specific people (even off-domain, e.g. @gmail.com) via the panel.
+    domain_ok = domain == _settings.auth_allowed_domain.lower()
+    known_member = user is not None and user.is_active
+    if not (domain_ok or allowlisted or known_member):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Access denied: ask an admin to add your email in the Admin panel first.",
+        )
+
     if user is None:
-        # Allowlisted emails and the very first user become admin; rest are analysts.
+        # On-domain first-timers are auto-created as analysts (members).
         first = db.query(User).count() == 0
         user = User(
             email=email,
@@ -74,6 +83,13 @@ async def callback(request: Request, response: Response, db: DbSession = Depends
         db.add(user)
         db.commit()
         db.refresh(user)
+    else:
+        # Refresh display name/picture on subsequent logins.
+        if info.get("name"):
+            user.name = info["name"]
+        if info.get("picture"):
+            user.picture = info["picture"]
+        db.commit()
     # Allowlisted accounts are always kept admin + active — they never lose access.
     if allowlisted and (user.role != Role.admin or not user.is_active):
         user.role = Role.admin
