@@ -29,6 +29,23 @@ def ga4_totals():
         "bounce_rate": 0.4925,
     }
 
+def ga4_event_counts():
+    """Per-event totals (eventName × eventCount) — feeds Path Exploration."""
+    return [
+        {"event_name": "page_view", "event_count": 3895723},
+        {"event_name": "session_start", "event_count": 3949333},
+        {"event_name": "first_visit", "event_count": 39220},
+        {"event_name": "user_engagement", "event_count": 1780400},
+        {"event_name": "scroll", "event_count": 1253907},
+        {"event_name": "click", "event_count": 14399},
+        {"event_name": "view_search_results", "event_count": 32283},
+        {"event_name": "form_start", "event_count": 21850},
+        {"event_name": "form_submit", "event_count": 9120},
+        {"event_name": "file_download", "event_count": 4870},
+        {"event_name": "video_start", "event_count": 3110},
+    ]
+
+
 # ---------------------------------------------------------------------------
 # GA4-style page metrics: current period vs prior period
 # ---------------------------------------------------------------------------
@@ -164,6 +181,10 @@ def gsc_top_queries_flat():
         {"query": "\u0c05\u0c32\u0c4d\u0c1f\u0c4d\u0c30\u0c3e cement", "clicks": 145, "impressions": 4300, "ctr": 0.034, "position": 3.8},
         {"query": "load bearing wall construction", "clicks": 88, "impressions": 5400, "ctr": 0.016, "position": 22.3},
         {"query": "earthquake resistant house design", "clicks": 72, "impressions": 4800, "ctr": 0.015, "position": 31.5},
+        # Regional-script striking-distance queries (Indian-language filter demo)
+        {"query": "सीमेंट की कीमत", "clicks": 210, "impressions": 6800, "ctr": 0.031, "position": 4.9},
+        {"query": "காங்கிரிட் விலை", "clicks": 150, "impressions": 5200, "ctr": 0.029, "position": 5.4},
+        {"query": "సిమెంట్ ధర", "clicks": 120, "impressions": 4300, "ctr": 0.028, "position": 6.8},
     ]
 
 
@@ -207,6 +228,37 @@ def gsc_query_page_pairs():
         {"query": "foundation cost calculator", "page": "/waterproofing-cost-calculator", "clicks": 110, "impressions": 4500, "position": 8.9},
         {"query": "foundation cost calculator", "page": "/foundation-info", "clicks": 55, "impressions": 3200, "position": 12.4},
         {"query": "ultratech cement price list", "page": "/best-cement-guide", "clicks": 870, "impressions": 21000, "position": 2.1},
+    ]
+
+
+def serper_positions():
+    """Fake serper.dev live-SERP checks (gl=in) for the demo Uplift Tracker."""
+    return [
+        {"query": "best cement brand india", "live_position": 8,
+         "our_url": SITE_URL + "/best-cement-guide", "checked_gl": "in",
+         "competitors_above": [
+             {"position": 1, "domain": "acc.in", "title": "ACC Cement — Building India"},
+             {"position": 2, "domain": "ambujacement.com", "title": "Ambuja Cement"},
+             {"position": 3, "domain": "jkcement.com", "title": "JK Super Cement"},
+         ]},
+        {"query": "concrete mix ratio guide", "live_position": 11,
+         "our_url": SITE_URL + "/house-construction-guide", "checked_gl": "in",
+         "competitors_above": [
+             {"position": 1, "domain": "civilread.com", "title": "Concrete Mix Ratios Explained"},
+             {"position": 2, "domain": "theconstructor.org", "title": "Grades of Concrete"},
+         ]},
+        {"query": "waterproofing solution for terrace", "live_position": 13,
+         "our_url": SITE_URL + "/roof-leakage-solutions", "checked_gl": "in",
+         "competitors_above": [
+             {"position": 1, "domain": "drfixit.co.in", "title": "Terrace Waterproofing"},
+             {"position": 2, "domain": "asianpaints.com", "title": "SmartCare Terrace Solutions"},
+         ]},
+        {"query": "cement plaster wall guide", "live_position": None,
+         "our_url": None, "checked_gl": "in",
+         "competitors_above": [
+             {"position": 1, "domain": "civiljungle.com", "title": "Wall Plastering Guide"},
+             {"position": 2, "domain": "happho.com", "title": "Cement Plastering Ratio & Steps"},
+         ]},
     ]
 
 

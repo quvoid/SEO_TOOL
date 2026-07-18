@@ -27,6 +27,7 @@ def load_data(client_cfg: dict, service_account_info: dict, days: int,
         return {
             "ga4": demo_data.ga4_page_metrics(),
             "ga4_totals": demo_data.ga4_totals(),
+            "events": demo_data.ga4_event_counts(),
             "gsc": demo_data.gsc_page_metrics(),
             "gsc_queries": demo_data.gsc_top_queries_flat(),
             "gsc_queries_prev": demo_data.gsc_top_queries_flat_prev(),
@@ -57,6 +58,7 @@ def load_data(client_cfg: dict, service_account_info: dict, days: int,
     ga4 = _try(lambda: connectors.fetch_ga4_page_metrics(prop, sa, days, organic_only, end_date=end_date, **pv), [], "GA4 error")
     ga4_totals = _try(lambda: connectors.fetch_ga4_totals(prop, sa, days, organic_only, end_date=end_date, **pv),
                       {"current_total": 0, "prev_total": 0}, "GA4 totals error")
+    events = _try(lambda: connectors.fetch_ga4_events(prop, sa, days, organic_only, end_date=end_date), [], "GA4 events error")
     gsc = _try(lambda: connectors.fetch_gsc_page_metrics(site, sa, days, end_date=end_date, **pv), [], "GSC page error")
     gsc_queries, gsc_queries_prev = _try(
         lambda: connectors.fetch_gsc_queries_with_prev(site, sa, days, top_n=200, end_date=end_date, **pv), ([], []), "GSC queries error"
@@ -72,7 +74,7 @@ def load_data(client_cfg: dict, service_account_info: dict, days: int,
         clarity = _try(lambda: connectors.fetch_clarity_insights(token), [], "Clarity error")
 
     return {
-        "ga4": ga4, "ga4_totals": ga4_totals, "gsc": gsc,
+        "ga4": ga4, "ga4_totals": ga4_totals, "events": events, "gsc": gsc,
         "gsc_queries": gsc_queries, "gsc_queries_prev": gsc_queries_prev,
         "gsc_pairs": gsc_pairs, "clarity": clarity,
         "funnel": demo_data.funnel_steps_by_device(),
@@ -83,12 +85,15 @@ def load_data(client_cfg: dict, service_account_info: dict, days: int,
 def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model: str,
                analyst_name: str = "", end_date: str | None = None,
                start_date: str | None = None, prev_start: str | None = None,
-               prev_end: str | None = None) -> dict:
+               prev_end: str | None = None,
+               on_progress=None) -> dict:
     """
     Port of app.run_report — returns the preserved 10-module results dict.
     `credential` is (kind, blob) from services.credentials.resolve_credential.
     `days` + optional `end_date` define a GA4-style custom range; the comparison
     period is the immediately preceding window of equal length.
+    `on_progress(step_index, total_steps, label)` is called before each module
+    so the API can report per-module progress to the polling frontend.
     Raises RuntimeError if GA4 returns nothing (same guard as the Streamlit app).
     """
     kind, blob = credential
@@ -123,26 +128,48 @@ def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model:
     grok = _settings.xai_api_key
     results: dict = {}
 
-    steps = [
-        ("organic", lambda: analysis.module_organic_performance(data["ga4"], data["gsc"], data["ga4_totals"], gk, model)),
-        ("journey", lambda: analysis.module_user_journey(data["ga4"], data["clarity"], gk, model)),
-        ("funnel", lambda: analysis.module_funnel(data["funnel"], gk, model)),
-        ("heatmap", lambda: analysis.module_heatmap(data["clarity"], gk, model)),
-        ("scroll", lambda: analysis.module_scroll(data["clarity"], data["ga4"], gk, model)),
-        ("keywords", lambda: analysis.module_keyword_intelligence(
-            data["gsc_queries"], gk, model, prev_queries=data["gsc_queries_prev"], site_url=data["site"])),
-        ("cannibalization", lambda: analysis.module_cannibalization(data["gsc_pairs"], gk, model)),
-        ("ux_audit", lambda: analysis.module_ux_audit(
-            data["ga4"], data["gsc"], data["clarity"], pagespeed_data, gk, model, crux_data=crux_data, grok_key=grok)),
-        ("hidden_insights", lambda: analysis.module_hidden_insights(data["ga4"], data["gsc"], data["clarity"], gk, model)),
-        ("indexation", lambda: analysis.module_indexation_health(data["indexation"], gk, model)),
-    ]
+    # Live SERP checks (serper.dev, one batched request) — ONLY the middle-band
+    # keywords worth uplifting; winners and no-hopers aren't worth credits.
+    if data.get("is_demo"):
+        serp_data = demo_data.serper_positions()
+    elif _settings.serper_api_key:
+        middle_qs = analysis.top_striking_queries(data["gsc_queries"], n=10)
+        serp_data = connectors.fetch_serper_positions(
+            middle_qs, data["site"], _settings.serper_api_key, gl=_settings.serper_gl)
+    else:
+        serp_data = []
 
-    for i, (key, fn) in enumerate(steps):
+    steps = [
+        ("organic", "Organic Performance", lambda: analysis.module_organic_performance(data["ga4"], data["gsc"], data["ga4_totals"], gk, model)),
+        ("journey", "User Journey", lambda: analysis.module_user_journey(data["ga4"], data["clarity"], gk, model)),
+        ("path_exploration", "Path Exploration", lambda: analysis.module_path_exploration(data["events"], gk, model)),
+        ("funnel", "Funnel Drop-off", lambda: analysis.module_funnel(data["funnel"], gk, model)),
+        ("heatmap", "Heatmap / Click", lambda: analysis.module_heatmap(data["clarity"], gk, model)),
+        ("scroll", "Scroll Analysis", lambda: analysis.module_scroll(data["clarity"], data["ga4"], gk, model)),
+        ("keywords", "Keyword Intelligence", lambda: analysis.module_keyword_intelligence(
+            data["gsc_queries"], gk, model, prev_queries=data["gsc_queries_prev"], site_url=data["site"])),
+        ("keyword_opportunities", "Top Keyword Opportunity", lambda: analysis.module_keyword_opportunities(
+            data["gsc_queries"], gk, model, site_url=data["site"])),
+        ("uplift", "Uplift Tracker", lambda: analysis.module_uplift_tracker(
+            data["gsc_queries"], data["gsc"], data["ga4"], data["gsc_pairs"], serp_data,
+            gk, model, site_url=data["site"])),
+        ("cannibalization", "Cannibalization", lambda: analysis.module_cannibalization(data["gsc_pairs"], gk, model)),
+        ("ux_audit", "UX & Speed Audit", lambda: analysis.module_ux_audit(
+            data["ga4"], data["gsc"], data["clarity"], pagespeed_data, gk, model, crux_data=crux_data, grok_key=grok)),
+        ("hidden_insights", "Hidden Insights", lambda: analysis.module_hidden_insights(data["ga4"], data["gsc"], data["clarity"], gk, model)),
+        ("indexation", "Indexation Health", lambda: analysis.module_indexation_health(data["indexation"], gk, model)),
+    ]
+    total_steps = len(steps) + 1  # + executive summary
+
+    for i, (key, label, fn) in enumerate(steps):
+        if on_progress:
+            on_progress(i, total_steps, label)
         results[key] = fn()
         if i < len(steps) - 1:
             time.sleep(_RATE_GAP_SECONDS)
 
+    if on_progress:
+        on_progress(len(steps), total_steps, "Executive Summary")
     results["exec"] = analysis.module_executive_summary(results, gk, model, grok_key=grok)
     results["_meta"] = {
         "site": data["site"],
