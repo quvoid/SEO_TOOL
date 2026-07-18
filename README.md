@@ -1,105 +1,324 @@
-# AI Growth Analyst
+<div align="center">
 
-Unifies **Google Analytics 4**, **Search Console**, and **Microsoft Clarity** into one
-AI-written growth report. Computes the metrics deterministically, then uses Claude to
-explain *why* and *what to do next* — per the Research & Implementation Guide.
+# 📊 AI Growth Analyst
 
-This is the **MVP** (Modules 1, 2, 3, 4, 5, 10) built to deploy fast. It calls the
-analytics APIs directly (no BigQuery warehouse needed to get started) and runs in a
-**demo mode** with zero credentials so you can see and share it immediately.
+**One dashboard that turns GA4, Search Console, Clarity & live Google rankings into an AI-written growth plan.**
+
+Built for the [Schbang](https://schbang.com) SEO · CRO · Content teams.
+
+<br>
+
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-5-646CFF?style=for-the-badge&logo=vite&logoColor=white)
+
+</div>
+
+---
+
+## ✨ What is this?
+
+An internal analytics platform that runs a **13-module growth report** for any client brand. It pulls the numbers deterministically from the real APIs, then uses AI to explain *why* things moved and *what to do next* — grouped into a task list your team can actually action.
+
+It stitches together five data sources into one report:
+
+| Source | What it gives |
+|---|---|
+| 📈 **Google Analytics 4** | sessions, engagement, events, funnels |
+| 🔍 **Google Search Console** | clicks, impressions, CTR, rankings, indexation |
+| 🖱️ **Microsoft Clarity** | scroll depth, dead / rage / quick-back clicks |
+| ⚡ **PageSpeed / CrUX** | Core Web Vitals for declining pages |
+| 🌐 **serper.dev** | live Google-India SERP positions + competitors |
+
+### The 13 modules
 
 ```
-demo_data.py    sample data — app works on deploy with no keys
-connectors.py   live GA4 / GSC / Clarity API clients (service-account auth)
-analysis.py     Modules 1–5 + 10 logic + Claude reasoning layer
-app.py          Streamlit UI + orchestration + HTML report export
+📋 Executive Summary      — the one-page verdict + 3-month plan + "since last report" diff
+✅ Action Plan            — every finding merged into one prioritized, exportable task list
+
+Performance   →  Organic Performance · User Journey · Path Exploration · Funnel Drop-off
+Engagement    →  Heatmap / Click · Scroll Analysis
+Keywords      →  Keyword Intelligence · Top Keyword Opportunity · Uplift Tracker · Cannibalization
+Health        →  UX & Speed Audit · Hidden Insights · Indexation Health
+
+🔧 Tools       →  On-Page SEO blueprint generator
+```
+
+> 💡 **The "forgotten middle."** Most tools only show winners and disasters. **Uplift Tracker** surfaces the stable-but-mediocre pages one small fix away from real gains — CTR-gap pages, flatliners, page-2 keywords, and live SERP tracking of exactly which competitors sit above you.
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart LR
+    subgraph Client
+        FE["⚛️ React + Vite<br/>frontend/ :5173"]
+    end
+    subgraph Server
+        BE["⚡ FastAPI<br/>backend/ :8000"]
+        AN["🧠 analysis.py<br/>connectors.py"]
+    end
+    subgraph External
+        G["GA4 · GSC · Clarity<br/>PageSpeed · serper.dev"]
+        AI["Gemini<br/>(AI narratives)"]
+        DB[("SQLite / Postgres")]
+    end
+    FE -- "/api proxy" --> BE
+    BE --> AN
+    AN --> G
+    AN --> AI
+    BE --> DB
+```
+
+The **React frontend** is the product. The **FastAPI backend** owns auth, per-client credentials, and the report pipeline. Both reuse the same `analysis.py` / `connectors.py` engine that also powers the legacy **Streamlit app** (`app.py`).
+
+```
+SEO_TOOL/
+├── frontend/            ⚛️  React + TypeScript + Vite dashboard  → the UI
+│   └── src/components/  ModuleViews, Dashboard, DateRange, ActionPlan…
+├── backend/             ⚡  FastAPI — auth, DB, report jobs      → the API
+│   └── app/
+│       ├── routers/     auth · clients · reports · onpage · admin
+│       ├── services/    reports.py (the 13-module pipeline)
+│       └── settings.py  env-based config
+├── analysis.py          🧠  all module logic + AI reasoning       (shared)
+├── connectors.py        🔌  GA4 / GSC / Clarity / serper clients  (shared)
+├── demo_data.py         🎭  sample data — runs with zero keys     (shared)
+└── app.py               📟  legacy Streamlit UI (still works)
 ```
 
 ---
 
-## 1. Run locally (5 min)
+## 🚀 Quick start
+
+You need **Python 3.12+** and **Node 18+**.
+
+The app has two halves — run the **backend** and the **frontend** in two terminals. (Or skip the backend entirely and run the frontend in **mock mode** — see below.)
+
+<table>
+<tr><th>🐧 Linux / macOS</th><th>🪟 Windows (PowerShell)</th></tr>
+<tr valign="top"><td>
+
+**1 · Backend** → http://localhost:8000
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env          # then edit — see below
+uvicorn app.main:app --reload --port 8000
+```
+
+**2 · Frontend** → http://localhost:5173
+```bash
+cd frontend
+npm install
+echo "VITE_USE_MOCK=false" > .env.local
+npm run dev
+```
+
+</td><td>
+
+**1 · Backend** → http://localhost:8000
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+copy .env.example .env         # then edit — see below
+uvicorn app.main:app --reload --port 8000
+```
+
+**2 · Frontend** → http://localhost:5173
+```powershell
+cd frontend
+npm install
+"VITE_USE_MOCK=false" | Out-File -Encoding utf8 .env.local
+npm run dev
+```
+
+</td></tr>
+</table>
+
+Open **http://localhost:5173**. With `DEV_AUTH_BYPASS=true` (below) you're logged straight in — no Google sign-in needed locally.
+
+### ⚡ Zero-setup demo (no backend, no keys)
+
+Just want to click around the UI? Run the frontend in **mock mode** — it serves realistic sample data with no backend at all:
 
 ```bash
-git clone <your-repo-url> && cd ai-growth-analyst
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-streamlit run app.py
+cd frontend
+npm install
+echo "VITE_USE_MOCK=true" > .env.local    # 🪟  "VITE_USE_MOCK=true" | Out-File -Encoding utf8 .env.local
+npm run dev
 ```
 
-It opens at http://localhost:8501 in **Demo data** mode — no keys required. Click
-**Run analysis** to see a full sample report.
-
 ---
 
-## 2. Deploy online — free (10 min)
+## 🔑 Configuration (`backend/.env`)
 
-The fastest public deploy is **Streamlit Community Cloud**.
+Copy `backend/.env.example` → `backend/.env` and fill it in. **For local dev you only need a handful of values** — the rest are for live data and production.
 
-1. Push this folder to a **GitHub** repo (public or private).
-2. Go to https://share.streamlit.io → **Create app** → pick your repo, branch, and
-   `app.py`.
-3. Click **Deploy**. In ~2 minutes you get a live URL like
-   `https://your-app.streamlit.app`. It already works in demo mode.
-4. To enable live data + AI narratives: in the app's **⋮ → Settings → Secrets**, paste
-   the contents of `secrets.toml.example` with your real values (see below). Save —
-   the app reboots automatically.
+### Minimal local setup (SQLite, no Google login)
 
-> Prefer your own infra? The same code runs on **Render**, **Railway**, or **Google
-> Cloud Run** — start command `streamlit run app.py --server.port $PORT --server.address 0.0.0.0`,
-> and set the secrets as a mounted `secrets.toml` or env vars.
+```ini
+ENVIRONMENT=development
+DEV_AUTH_BYPASS=true                    # skip Google OAuth locally
+DEV_USER_EMAIL=you@schbang.com
 
----
+# SQLite = zero setup. (Postgres string also works — see below.)
+DATABASE_URL=sqlite:///./growth_analyst_dev.db
 
-## 3. Get your credentials
+# Generate once — see command below 👇
+CREDENTIAL_ENCRYPTION_KEY=paste-a-fernet-key-here
+SESSION_SECRET=any-long-random-string
 
-**Anthropic (AI narratives)** — https://console.anthropic.com → API key. Needs API
-credits; this is *separate* from a Claude.ai subscription. Without it the app still
-runs and shows all computed tables/charts, just no written narrative.
+# Optional but recommended:
+GEMINI_API_KEY=AIzaSy...                # AI narratives (app works without it)
+SERPER_API_KEY=...                      # live SERP tracking in Uplift Tracker
+SERPER_GL=in                            # SERP country (in = India)
+```
 
-**Google service account (GA4 + GSC, one account does both)**
-1. Google Cloud Console → create a service account → create a **JSON key**.
-2. Enable the **Google Analytics Data API** and **Search Console API** for the project.
-3. GA4 → Admin → *Property Access Management* → add the service-account email as **Viewer**.
-4. Search Console → Settings → *Users and permissions* → add it (Restricted is enough).
-5. Paste the JSON fields into the `[gcp_service_account]` block of your secrets.
+Generate the encryption key:
 
-**Microsoft Clarity** — Clarity dashboard → Settings → **Data Export** → generate a
-token. Note: Clarity's export API only returns the **last 1–3 days** of aggregated data.
+```bash
+# 🐧 Linux/macOS  &  🪟 Windows
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
-**IDs to fill in**
-- `ga4.property_id` — GA4 Admin → Property Settings → Property ID (digits only).
-- `gsc.site_url` — exactly as listed in GSC, e.g. `sc-domain:example.com` or `https://example.com/`.
+### Full env reference
 
----
+<details>
+<summary><b>Click to expand all variables</b></summary>
 
-## 4. How it maps to the guide
-
-| Guide module | Status | Inputs |
+| Variable | Required? | What it's for |
 |---|---|---|
-| 1 Organic Performance | ✅ | GA4 sessions + GSC clicks/CTR/position |
-| 2 User Journey | ✅ | GA4 bounce/time + Clarity scroll/dead clicks |
-| 3 Funnel Drop-off | ✅ | funnel step counts |
-| 4 Heatmap/Click | ✅ | Clarity dead/rage/quickback clicks |
-| 5 Scroll | ✅ | Clarity scroll depth |
-| 10 Executive Summary | ✅ | synthesises the above |
-| 6–9 (Click intel, Intent mismatch, Conv. scoring, Weekly finder) | roadmap | — |
-| BigQuery warehouse / Dataflow ETL | deferred | direct-API is enough for MVP |
+| `ENVIRONMENT` | ✔ | `development` or `production` (production forces secure cookies) |
+| `DEV_AUTH_BYPASS` | dev only | `true` logs you in as `DEV_USER_EMAIL` with no OAuth |
+| `DEV_USER_EMAIL` | dev only | identity assumed when bypass is on |
+| `DATABASE_URL` | ✔ | `sqlite:///./growth_analyst_dev.db` for local, Postgres for prod |
+| `CREDENTIAL_ENCRYPTION_KEY` | ✔ | Fernet key — encrypts client Google creds at rest |
+| `SESSION_SECRET` | ✔ | signs session cookies |
+| `FRONTEND_ORIGIN` | ✔ | CORS allowlist, e.g. `http://localhost:5173` |
+| `AUTH_GOOGLE_CLIENT_ID` / `_SECRET` | prod | Google OAuth login gate |
+| `AUTH_ALLOWED_DOMAIN` | prod | restrict login to a domain (e.g. `schbang.com`) |
+| `AUTH_REDIRECT_URI` | prod | OAuth callback URL |
+| `GEMINI_API_KEY` | optional | AI narratives (tables/charts still render without it) |
+| `XAI_API_KEY` | optional | alternate AI engine |
+| `GOOGLE_PAGESPEED_API_KEY` | optional | Core Web Vitals in UX & Speed Audit |
+| `CLARITY_API_TOKEN` | optional | scroll / dead-click data (Clarity exports last 1–3 days only) |
+| `SERPER_API_KEY` | optional | live Google SERP checks in Uplift Tracker |
+| `SERPER_GL` | optional | SERP country code, default `in` |
 
-### Extending
-- **Module 7 (Intent Mismatch):** `fetch_gsc_top_queries()` is already in `connectors.py`
-  / `demo_data.py`. Add a module that embeds top queries vs page content and flags low
-  similarity. Add it to `run_report()` and `show_results()` in `app.py`.
-- **Scheduled/weekly runs:** wrap `run_report()` in a small script and trigger it with
-  GitHub Actions or Cloud Scheduler, emailing the HTML report.
-- **BigQuery:** when you outgrow direct API limits (100k+ pages), swap the connectors to
-  read from BigQuery tables — the analysis modules don't change.
+</details>
+
+### Getting the data-source credentials
+
+<details>
+<summary><b>Google service account (GA4 + GSC), Gemini, Clarity, serper.dev</b></summary>
+
+- **Google service account** (one account does GA4 **and** GSC):
+  1. Google Cloud Console → create a service account → create a **JSON key**.
+  2. Enable **Google Analytics Data API** + **Search Console API**.
+  3. GA4 → Admin → *Property Access Management* → add the service-account email as **Viewer**.
+  4. GSC → Settings → *Users and permissions* → add it (Restricted is fine).
+  5. Add the brand + its JSON via the in-app **Admin** panel (encrypted at rest).
+- **Gemini** — [Google AI Studio](https://aistudio.google.com/apikey) → API key.
+- **Microsoft Clarity** — Clarity dashboard → Settings → **Data Export** → token.
+- **serper.dev** — [serper.dev](https://serper.dev) → API key (free credits on signup; ~10 credits per report run, one batched call).
+
+</details>
 
 ---
 
-## Notes & caveats
-- Demo mode uses invented data for a construction/building-materials brand so the
-  narrative reads realistically; **none of it is real traffic.**
-- GSC returns top rows only and Clarity is limited to a 1–3 day window — both are API
-  limits, not bugs. For longer Clarity history, call it daily and store the results.
-- Funnel input is currently static sample data; wire it to a GA4 funnel/events query for
-  your real flow.
+## 🖥️ Legacy Streamlit app (optional)
+
+The original single-file app still runs and works in demo mode with zero keys:
+
+```bash
+# 🐧 Linux/macOS
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run app.py                    # → http://localhost:8501
+```
+```powershell
+# 🪟 Windows
+python -m venv .venv; .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+streamlit run app.py                    # → http://localhost:8501
+```
+
+---
+
+## 🧰 Handy commands
+
+```bash
+# Frontend
+npm run dev          # dev server (HMR)
+npm run build        # production build → dist/
+npm run typecheck    # tsc, no emit
+
+# Backend
+uvicorn app.main:app --reload --port 8000     # dev, auto-reload
+python -m py_compile app/**/*.py              # quick syntax check
+```
+
+---
+
+## 🩹 Troubleshooting
+
+<details>
+<summary><b><code>git push</code> rejects my correct password</b></summary>
+
+GitHub removed password auth in 2021. Use a **Personal Access Token** (Settings → Developer settings → Tokens → `repo` scope) as the *password* at the prompt, or switch the remote to SSH.
+</details>
+
+<details>
+<summary><b><code>sqlite3.OperationalError: unable to open database file</code></b></summary>
+
+Your `DATABASE_URL` points somewhere that doesn't exist (e.g. a Windows path on Linux). Use a path valid for your OS, or the relative default `sqlite:///./growth_analyst_dev.db`.
+</details>
+
+<details>
+<summary><b><code>Cannot find module @rollup/rollup-linux-x64-gnu</code> (frontend on Linux)</b></summary>
+
+A known npm optional-deps bug. Fix with:
+```bash
+rm -rf node_modules package-lock.json && npm install
+# or, quicker:
+npm install @rollup/rollup-linux-x64-gnu
+```
+</details>
+
+<details>
+<summary><b>The venv won't activate / has <code>.exe</code> files on Linux</b></summary>
+
+A venv created on Windows (`.venv/Scripts/*.exe`) won't run on Linux and vice-versa. Delete it and recreate: `python3 -m venv .venv`. Linux uses `.venv/bin/`, Windows uses `.venv\Scripts\`.
+</details>
+
+<details>
+<summary><b>Frontend loads but shows no data / can't reach the API</b></summary>
+
+Make sure the backend is running on **:8000** (Vite proxies `/api` → `localhost:8000`), and that `frontend/.env.local` has `VITE_USE_MOCK=false`. For a backend-free UI, set it to `true`.
+</details>
+
+---
+
+## 🚢 Deployment
+
+| Piece | Where | Notes |
+|---|---|---|
+| **Frontend** | Vercel / Netlify | static build (`npm run build`) |
+| **Backend** | Render / Railway | long-running; report jobs take ~60–90s |
+| **Database** | Neon / Supabase | managed Postgres for production |
+
+For production set `ENVIRONMENT=production` (secure cookies), move `CREDENTIAL_ENCRYPTION_KEY` + OAuth secrets to a Secret Manager, and manage the schema with Alembic instead of dev auto-create. Docker, `render.yaml`, and `railway.json` are included.
+
+---
+
+<div align="center">
+<sub>Built with ⚡ FastAPI, ⚛️ React, and a lot of GSC data · Schbang Analytics</sub>
+</div>
