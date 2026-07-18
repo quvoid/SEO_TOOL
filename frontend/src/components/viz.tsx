@@ -1,5 +1,6 @@
 // Lightweight, flat visualization primitives (SVG/CSS — no chart lib).
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { ArrowDown, ArrowUp } from "lucide-react";
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v) || 0);
 export const fmt = (v: unknown) => {
@@ -115,7 +116,7 @@ export function Progress({ pct, color = "var(--accent)" }: { pct: number; color?
   );
 }
 
-export function StatTiles({ tiles }: { tiles: { k: string; v: ReactNode; cls?: string }[] }) {
+export function StatTiles({ tiles }: { tiles: { k: ReactNode; v: ReactNode; cls?: string }[] }) {
   return (
     <div className="stat-row">
       {tiles.map((t, i) => (
@@ -128,12 +129,50 @@ export function StatTiles({ tiles }: { tiles: { k: string; v: ReactNode; cls?: s
   );
 }
 
-export function Card({ title, children, sub }: { title?: string; children: ReactNode; sub?: string }) {
+export function Card({ title, children, sub }: { title?: ReactNode; children: ReactNode; sub?: ReactNode }) {
   return (
     <div className="card">
       {title && <h2 style={{ fontSize: 15 }}>{title}</h2>}
       {sub && <div className="muted" style={{ marginBottom: 4 }}>{sub}</div>}
       {children}
     </div>
+  );
+}
+
+/* ---- Shared click-to-sort helpers for data tables ---- */
+export interface SortState {
+  key: string;
+  dir: "asc" | "desc";
+  toggle: (k: string) => void;
+}
+
+export function useSort<T extends Record<string, unknown>>(
+  rows: T[], initialKey: string, initialDir: "asc" | "desc" = "desc",
+) {
+  const [key, setKey] = useState(initialKey);
+  const [dir, setDir] = useState<"asc" | "desc">(initialDir);
+  const sorted = [...rows].sort((a, b) => {
+    const av = a[key], bv = b[key];
+    const cmp = typeof av === "number" || typeof bv === "number"
+      ? (Number(av) || 0) - (Number(bv) || 0)
+      : String(av ?? "").localeCompare(String(bv ?? ""));
+    return dir === "asc" ? cmp : -cmp;
+  });
+  const toggle = (k: string) => {
+    if (k === key) setDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setKey(k); setDir("desc"); }
+  };
+  const sort: SortState = { key, dir, toggle };
+  return { sorted, sort };
+}
+
+export function SortTh({ k, sort, children }: { k: string; sort: SortState; children: ReactNode }) {
+  const active = sort.key === k;
+  return (
+    <th className={`sortable ${active ? "active" : ""}`} onClick={() => sort.toggle(k)}>
+      <span className="th-inner">
+        {children} {active && (sort.dir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+      </span>
+    </th>
   );
 }

@@ -440,6 +440,89 @@ def module_user_journey(ga4_rows, clarity_rows, api_key, model):
 
 
 # ===========================================================================
+# Module 2b — Path Exploration (GA4 event flow)
+# ===========================================================================
+def module_path_exploration(event_rows, api_key, model):
+    """
+    Reconstructs a GA4-style Path Exploration from per-event totals:
+    STARTING POINT (session_start) → STEP +1 (page_view) → STEP +2 (the
+    events that most commonly follow). GA4's Data API can't return true
+    event sequences, so the flow is built from event volumes — the same
+    session_start → page_view → next-event shape GA4's default report shows.
+    """
+    events = [
+        {"event_name": r.get("event_name", ""), "event_count": int(r.get("event_count", 0) or 0)}
+        for r in (event_rows or [])
+        if r.get("event_name")
+    ]
+    events.sort(key=lambda e: e["event_count"], reverse=True)
+    total_events = sum(e["event_count"] for e in events)
+
+    by_name = {e["event_name"]: e["event_count"] for e in events}
+
+    def _node(name):
+        return {"event_name": name, "event_count": by_name.get(name, 0)}
+
+    start_count = by_name.get("session_start", events[0]["event_count"] if events else 0)
+    starting_event = "session_start" if "session_start" in by_name else (events[0]["event_name"] if events else "—")
+
+    # Step +1 = the dominant "next" event (page_view where present).
+    step1_name = "page_view" if "page_view" in by_name else (events[1]["event_name"] if len(events) > 1 else starting_event)
+
+    # Step +2 = everything else, top 3 individually + a "+N More" rollup.
+    consumed = {starting_event, step1_name}
+    rest = [e for e in events if e["event_name"] not in consumed]
+    TOP_N = 3
+    step2_nodes = [{"event_name": e["event_name"], "event_count": e["event_count"]} for e in rest[:TOP_N]]
+    more = rest[TOP_N:]
+    if more:
+        step2_nodes.append({
+            "event_name": f"+{len(more)} More",
+            "event_count": sum(e["event_count"] for e in more),
+            "is_rollup": True,
+        })
+
+    steps = [
+        {"label": "Starting point", "nodes": [_node(starting_event)]},
+        {"label": "Step +1", "nodes": [_node(step1_name)]},
+        {"label": "Step +2", "nodes": step2_nodes},
+    ]
+
+    ranked = [
+        {"event_name": e["event_name"], "event_count": e["event_count"],
+         "pct": round(e["event_count"] / total_events * 100, 1) if total_events else 0.0}
+        for e in events[:12]
+    ]
+
+    if events:
+        lines = "\n".join(f"- {e['event_name']}: {e['event_count']:,} events" for e in events[:8])
+        prompt = (
+            "GA4 event path exploration for an organic audience. Starting point is "
+            f"'{starting_event}', the dominant next step is '{step1_name}', then users "
+            f"branch into other events:\n{lines}\n\n"
+            "Interpret the user path: is the session_start → page_view → engagement flow "
+            "healthy, where do users drop off before reaching conversion-style events "
+            "(form_submit, file_download), and name the single highest-impact fix."
+        )
+    else:
+        prompt = (
+            "No GA4 events were returned for this property/period. Briefly note that "
+            "path exploration needs event data and suggest verifying the GA4 property ID."
+        )
+    narrative = reasoning(prompt, api_key, model)
+
+    return {
+        "title": "Module — Path Exploration",
+        "starting_event": starting_event,
+        "starting_count": start_count,
+        "total_events": total_events,
+        "steps": steps,
+        "events": ranked,
+        "narrative": narrative,
+    }
+
+
+# ===========================================================================
 # Module 3 — Funnel Drop-off (with device segmentation)
 # ===========================================================================
 def module_funnel(funnel_data, api_key, model):
@@ -737,6 +820,277 @@ def module_keyword_intelligence(
         "non_brand_impressions": non_brand_imps,
         "brand_click_pct": brand_click_pct,
         "brand_terms": brand_terms,
+        "narrative": narrative,
+    }
+
+
+# ===========================================================================
+# Module 6c — Top Keyword Opportunities (overall + Indian-language filter)
+# ===========================================================================
+# GSC regional-keyword filter: a char, a non-printable-ASCII char, a char.
+# Matches queries containing regional-script characters (Devanagari, Tamil,
+# Telugu, Bengali, …) — i.e. Indian-language keywords for the brand.
+REGIONAL_KEYWORD_REGEX = r".[^ -~]."
+
+
+def module_keyword_opportunities(gsc_queries, api_key, model, site_url=None):
+    """
+    Striking-distance keyword opportunities (position 4–20, meaningful
+    impressions), returned as one ranked list where each row is tagged
+    `is_regional`. The frontend filter ("Indian language specific") uses this
+    flag; it is computed with the GSC regional regex `.[^ -~].`.
+    """
+    ESTIMATED_CTR_TOP3 = 0.10
+    MIN_IMPRESSIONS = 100
+    regional_re = re.compile(REGIONAL_KEYWORD_REGEX)
+
+    opportunities = []
+    for row in gsc_queries or []:
+        query = row.get("query", "")
+        position = row.get("position", 100)
+        current_clicks = row.get("clicks", 0)
+        impressions = row.get("impressions", 0)
+        if impressions >= MIN_IMPRESSIONS and 4 <= position <= 20:
+            potential_clicks = int(impressions * ESTIMATED_CTR_TOP3)
+            click_uplift = max(0, potential_clicks - current_clicks)
+            opportunities.append({
+                "query": query,
+                "position": round(position, 1),
+                "impressions": impressions,
+                "current_clicks": current_clicks,
+                "potential_clicks": potential_clicks,
+                "click_uplift": click_uplift,
+                "is_regional": bool(regional_re.search(query)),
+            })
+    opportunities.sort(key=lambda o: o["click_uplift"], reverse=True)
+
+    regional = [o for o in opportunities if o["is_regional"]]
+    total_uplift = sum(o["click_uplift"] for o in opportunities)
+    regional_uplift = sum(o["click_uplift"] for o in regional)
+
+    if opportunities:
+        overall_lines = "\n".join(
+            f"- '{o['query']}': pos {o['position']}, {o['impressions']:,} impr, "
+            f"+{o['click_uplift']:,} potential clicks" for o in opportunities[:6]
+        )
+        reg_note = ""
+        if regional:
+            reg_lines = "\n".join(
+                f"- '{o['query']}': pos {o['position']}, +{o['click_uplift']:,} potential clicks"
+                for o in regional[:5]
+            )
+            reg_note = (
+                f"\n\nIndian-language (regional-script) opportunities — {len(regional)} found, "
+                f"+{regional_uplift:,} combined potential clicks:\n{reg_lines}"
+            )
+        prompt = (
+            f"Top keyword opportunities (striking distance, position 4–20):\n{overall_lines}{reg_note}\n\n"
+            "Summarise the biggest quick wins overall, then call out the regional/"
+            "Indian-language opportunity: is there under-served vernacular demand worth "
+            "a dedicated content or hreflang play? Keep it action-oriented."
+        )
+    else:
+        prompt = (
+            "No striking-distance (position 4–20) keyword opportunities were found. "
+            "Briefly note the site either ranks top-3 already or targets low-volume terms."
+        )
+    narrative = reasoning(prompt, api_key, model)
+
+    return {
+        "title": "Top Keyword Opportunities",
+        "opportunities": opportunities,
+        "regional_opportunities": regional,
+        "regional_count": len(regional),
+        "total_count": len(opportunities),
+        "total_uplift": total_uplift,
+        "regional_uplift": regional_uplift,
+        "regional_filter_regex": REGIONAL_KEYWORD_REGEX,
+        "narrative": narrative,
+    }
+
+
+# ===========================================================================
+# Module 6d — Uplift Tracker (the forgotten middle band)
+# ===========================================================================
+# Industry-average organic CTR by position — used to spot pages whose CTR is
+# below what their ranking should earn (a title/meta problem, not a ranking one).
+_EXPECTED_CTR = {1: 0.28, 2: 0.15, 3: 0.10, 4: 0.07, 5: 0.05,
+                 6: 0.04, 7: 0.03, 8: 0.025, 9: 0.02, 10: 0.018}
+
+
+def _expected_ctr(position: float) -> float:
+    p = int(round(position))
+    if p in _EXPECTED_CTR:
+        return _EXPECTED_CTR[p]
+    return 0.012 if p <= 20 else 0.005
+
+
+def top_striking_queries(gsc_queries: list[dict], n: int = 10, min_impressions: int = 100) -> list[str]:
+    """The middle band worth live-tracking: position 4–20, real impressions,
+    ranked by potential click uplift. Used to pick serper.dev SERP checks."""
+    scored = []
+    for row in gsc_queries or []:
+        pos = row.get("position", 100)
+        imps = row.get("impressions", 0)
+        if 4 <= pos <= 20 and imps >= min_impressions:
+            uplift = max(0, int(imps * 0.10) - row.get("clicks", 0))
+            scored.append((uplift, row.get("query", "")))
+    scored.sort(reverse=True)
+    return [q for _, q in scored[:n] if q]
+
+
+def module_uplift_tracker(gsc_queries, gsc_pages, ga4_rows, gsc_pairs, serp_data,
+                          api_key, model, site_url=None):
+    """
+    The forgotten middle: not winners, not disasters — the stable-but-mediocre
+    pages and keywords one small fix away from meaningful gains.
+      - CTR gap: pages earning less CTR than their position should (title/meta fix)
+      - Flatliners: flat traffic + high impressions = unclaimed potential
+      - Live SERP tracker: middle keywords' real Google positions + competitors above
+      - Internal links: authority pages that should link to striking-distance pages
+    """
+    # ── CTR gap ─────────────────────────────────────────────────────────────
+    ctr_gap = []
+    for r in gsc_pages or []:
+        imps = r.get("impressions", 0)
+        pos = r.get("position") or 0
+        ctr = r.get("ctr", 0) or 0
+        if imps >= 500 and pos:
+            exp = _expected_ctr(pos)
+            lost = int((exp - ctr) * imps)
+            if lost > 20:
+                ctr_gap.append({
+                    "page": r.get("page", ""), "position": round(pos, 1),
+                    "impressions": imps, "ctr_pct": round(ctr * 100, 2),
+                    "expected_ctr_pct": round(exp * 100, 2), "clicks_lost": lost,
+                })
+    ctr_gap.sort(key=lambda x: x["clicks_lost"], reverse=True)
+    ctr_gap = ctr_gap[:12]
+    total_clicks_lost = sum(c["clicks_lost"] for c in ctr_gap)
+
+    # ── Flatliners: ±5% sessions, meaningful impressions ────────────────────
+    gsc_by_page = {_normalize_page(r.get("page", "")): r for r in (gsc_pages or [])}
+    flatliners = []
+    for r in ga4_rows or []:
+        cur, prev = r.get("sessions", 0), r.get("prev_sessions", 0)
+        if prev >= 100:
+            delta = (cur - prev) / prev * 100
+            if -5 <= delta <= 5:
+                g = gsc_by_page.get(_normalize_page(r.get("page_path", "")), {})
+                if g.get("impressions", 0) >= 1000:
+                    flatliners.append({
+                        "page": r.get("page_path", ""), "sessions": cur,
+                        "delta_pct": round(delta, 1), "impressions": g.get("impressions", 0),
+                        "position": round(g.get("position", 0) or 0, 1),
+                        "ctr_pct": round((g.get("ctr", 0) or 0) * 100, 2),
+                    })
+    flatliners.sort(key=lambda x: x["impressions"], reverse=True)
+    flatliners = flatliners[:10]
+
+    # ── Live SERP tracker (middle keywords only) ────────────────────────────
+    q_pos = {r.get("query"): r.get("position") for r in (gsc_queries or [])}
+    serp_tracker = []
+    for s in serp_data or []:
+        gsc_pos = q_pos.get(s.get("query"))
+        live = s.get("live_position")
+        serp_tracker.append({
+            **s,
+            "gsc_position": round(gsc_pos, 1) if gsc_pos else None,
+            "delta": (round(gsc_pos - live, 1) if (gsc_pos and live) else None),
+        })
+
+    # ── Internal-link suggestions ───────────────────────────────────────────
+    STOP = {"the", "and", "for", "with", "how", "what", "why", "best", "india",
+            "cost", "per", "your", "are", "can", "from", "into", "near"}
+
+    def toks(q: str) -> set:
+        return {w for w in re.split(r"\W+", q.lower()) if len(w) > 3 and w not in STOP}
+
+    page_clicks: dict[str, int] = {}
+    page_tokens: dict[str, set] = {}
+    for p in gsc_pairs or []:
+        pg = p.get("page", "")
+        if not pg:
+            continue
+        page_clicks[pg] = page_clicks.get(pg, 0) + p.get("clicks", 0)
+        page_tokens.setdefault(pg, set()).update(toks(p.get("query", "")))
+
+    middle_qs = top_striking_queries(gsc_queries, n=8)
+    best_page: dict[str, dict] = {}
+    for p in gsc_pairs or []:
+        q = p.get("query", "")
+        if q in middle_qs and p.get("clicks", 0) >= best_page.get(q, {}).get("clicks", -1):
+            best_page[q] = p
+
+    internal_links = []
+    for q in middle_qs:
+        target = best_page.get(q, {}).get("page")
+        if not target:
+            continue
+        qt = toks(q)
+        cands = sorted(
+            ((pc, pg) for pg, pc in page_clicks.items()
+             if pg != target and qt & page_tokens.get(pg, set())),
+            reverse=True,
+        )
+        if cands:
+            internal_links.append({
+                "query": q, "target": target, "anchor": q,
+                "sources": [{"page": pg, "clicks": pc} for pc, pg in cands[:3]],
+            })
+    internal_links = internal_links[:8]
+
+    # ── AI narrative ────────────────────────────────────────────────────────
+    bits = []
+    if ctr_gap:
+        bits.append(
+            f"{len(ctr_gap)} pages earn less CTR than their position should — "
+            f"~{total_clicks_lost:,} clicks/period lost. Worst: "
+            + "; ".join(f"{c['page']} (pos {c['position']}, {c['ctr_pct']}% vs {c['expected_ctr_pct']}% expected)"
+                        for c in ctr_gap[:3])
+        )
+    if flatliners:
+        bits.append(
+            f"{len(flatliners)} flatliner pages (±5% traffic, high impressions): "
+            + ", ".join(f["page"] for f in flatliners[:4])
+        )
+    tracked_live = [s for s in serp_tracker if s.get("live_position")]
+    if tracked_live:
+        bits.append(
+            "Live Google (India) middle-keyword positions: "
+            + "; ".join(
+                f"'{s['query']}' live #{s['live_position']}"
+                + (f" behind {s['competitors_above'][0]['domain']}" if s.get("competitors_above") else "")
+                for s in tracked_live[:4])
+        )
+    if internal_links:
+        bits.append(
+            f"{len(internal_links)} internal-link plays, e.g. link "
+            f"{internal_links[0]['sources'][0]['page']} → {internal_links[0]['target']} "
+            f"(anchor '{internal_links[0]['anchor']}')"
+        )
+    if bits:
+        prompt = (
+            "Middle-band uplift analysis (pages/keywords that are neither winning nor failing "
+            "— the highest-ROI fixes):\n- " + "\n- ".join(bits) + "\n\n"
+            "Prioritise the 3 highest-impact actions. For each: the specific fix, which team "
+            "(SEO/content/dev) owns it, and the realistic monthly gain. Be direct."
+        )
+    else:
+        prompt = (
+            "No middle-band issues found: CTR matches positions, no stagnant high-impression "
+            "pages. Briefly confirm and suggest what to monitor next."
+        )
+    narrative = reasoning(prompt, api_key, model)
+
+    return {
+        "title": "Uplift Tracker — The Middle Band",
+        "ctr_gap": ctr_gap,
+        "total_clicks_lost": total_clicks_lost,
+        "flatliners": flatliners,
+        "serp_tracker": serp_tracker,
+        "internal_links": internal_links,
+        "tracked_queries": len(serp_tracker),
         "narrative": narrative,
     }
 

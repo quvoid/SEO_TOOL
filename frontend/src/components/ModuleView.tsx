@@ -37,7 +37,7 @@ function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
   const cols = Array.from(new Set(rows.flatMap((r) => Object.keys(r))));
   return (
     <div className="table-scroll">
-      <table className="data">
+      <table className="data num">
         <thead>
           <tr>{cols.map((c) => <th key={c}>{humanize(c)}</th>)}</tr>
         </thead>

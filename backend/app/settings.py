@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # Optional data sources
     google_pagespeed_api_key: str | None = None
     clarity_api_token: str | None = None
+    # serper.dev — live Google SERP checks for middle-band keyword tracking.
+    serper_api_key: str | None = None
+    # Country for SERP checks (serper `gl` param).
+    serper_gl: str = "in"
 
     @property
     def is_production(self) -> bool:

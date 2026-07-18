@@ -79,6 +79,39 @@ export const MOCK_RESULTS: Results = {
       { page: "/roof-leakage-solutions", bounce_rate: 0.64, scroll_percent: 44 },
     ],
   },
+  path_exploration: {
+    title: "Module — Path Exploration",
+    starting_event: "session_start",
+    starting_count: 3949333,
+    total_events: 11004035,
+    narrative:
+      "The session_start → page_view flow is healthy (99% of sessions register a page view). The drop happens after the first page: only a small share reach engagement-style events, and conversion events (form_submit, file_download) are a tiny fraction. Highest-impact fix: surface a clear next action above the fold on landing pages to pull users from page_view into engagement.",
+    steps: [
+      { label: "Starting point", nodes: [{ event_name: "session_start", event_count: 3949333 }] },
+      { label: "Step +1", nodes: [{ event_name: "page_view", event_count: 3895723 }] },
+      {
+        label: "Step +2",
+        nodes: [
+          { event_name: "user_engagement", event_count: 1780400 },
+          { event_name: "scroll", event_count: 1253907 },
+          { event_name: "view_search_results", event_count: 32283 },
+          { event_name: "+5 More", event_count: 92620, is_rollup: true },
+        ],
+      },
+    ],
+    events: [
+      { event_name: "page_view", event_count: 3895723, pct: 35.4 },
+      { event_name: "session_start", event_count: 3949333, pct: 35.9 },
+      { event_name: "user_engagement", event_count: 1780400, pct: 16.2 },
+      { event_name: "scroll", event_count: 1253907, pct: 11.4 },
+      { event_name: "first_visit", event_count: 39220, pct: 0.4 },
+      { event_name: "view_search_results", event_count: 32283, pct: 0.3 },
+      { event_name: "form_start", event_count: 21850, pct: 0.2 },
+      { event_name: "click", event_count: 14399, pct: 0.1 },
+      { event_name: "form_submit", event_count: 9120, pct: 0.1 },
+      { event_name: "file_download", event_count: 4870, pct: 0.0 },
+    ],
+  },
   funnel: {
     title: "Module 3 — Funnel Drop-off",
     narrative:
@@ -134,10 +167,101 @@ export const MOCK_RESULTS: Results = {
     brand_clicks: 12400,
     non_brand_clicks: 28600,
     brand_click_pct: 30.2,
+    bands: {
+      "1-3": [
+        { query: "ultratech cement price list", position: 2.1, impressions: 21000 },
+        { query: "ultratech cement dealers", position: 2.8, impressions: 14000 },
+        { query: "waterproofing cost india", position: 3.8, impressions: 12000 },
+      ],
+      "4-10": [
+        { query: "waterproofing solutions", position: 4.2, impressions: 18400 },
+        { query: "roof leakage repair", position: 5.5, impressions: 9800 },
+        { query: "cement grades explained", position: 6.1, impressions: 42300 },
+        { query: "best cement brand india", position: 9.1, impressions: 40000 },
+      ],
+      "11-20": [
+        { query: "concrete mix ratio guide", position: 12.5, impressions: 15000 },
+        { query: "waterproofing solution for terrace", position: 14.3, impressions: 11000 },
+        { query: "cement plaster wall guide", position: 18.4, impressions: 6200 },
+      ],
+      "21-50": [
+        { query: "load bearing wall construction", position: 22.3, impressions: 5400 },
+        { query: "earthquake resistant house design", position: 31.5, impressions: 4800 },
+      ],
+    },
+    new_queries: [
+      { query: "monsoon roof protection", clicks: 140, impressions: 8200, position: 7.8 },
+      { query: "cement price today india", clicks: 95, impressions: 6100, position: 9.2 },
+      { query: "सीमेंट की कीमत", clicks: 210, impressions: 6800, position: 4.9 },
+    ],
+    lost_queries: [
+      { query: "terrace waterproofing tips", clicks: 180, impressions: 9500, position: 7.2 },
+      { query: "site leveling cost per sqft", clicks: 95, impressions: 4100, position: 16.8 },
+    ],
     opportunities: [
       { query: "waterproofing solutions", position: 4.2, impressions: 18400, current_clicks: 640, potential_clicks: 2100, click_uplift: 1460 },
       { query: "cement grades explained", position: 6.1, impressions: 42300, current_clicks: 210, potential_clicks: 3800, click_uplift: 3590 },
       { query: "roof leakage repair", position: 5.5, impressions: 9800, current_clicks: 300, potential_clicks: 1200, click_uplift: 900 },
+    ],
+  },
+  keyword_opportunities: {
+    title: "Top Keyword Opportunities",
+    regional_filter_regex: ".[^ -~].",
+    total_count: 7,
+    regional_count: 3,
+    total_uplift: 9860,
+    regional_uplift: 1290,
+    narrative:
+      "The biggest overall quick win is 'cement grades explained' (42k impressions at pos 6.1). On the regional side, three Indian-language cement queries sit in striking distance with strong CTR already — a dedicated vernacular content + hreflang play could capture under-served demand that English pages don't rank for.",
+    opportunities: [
+      { query: "cement grades explained", position: 6.1, impressions: 42300, current_clicks: 210, potential_clicks: 4230, click_uplift: 4020, is_regional: false },
+      { query: "waterproofing solutions", position: 4.2, impressions: 18400, current_clicks: 640, potential_clicks: 1840, click_uplift: 1200, is_regional: false },
+      { query: "best cement brand india", position: 9.1, impressions: 40000, current_clicks: 480, potential_clicks: 4000, click_uplift: 3520, is_regional: false },
+      { query: "अल्ट्राटेक cement", position: 4.9, impressions: 6800, current_clicks: 260, potential_clicks: 680, click_uplift: 420, is_regional: true },
+      { query: "அல்ட்ரா cement", position: 5.4, impressions: 5200, current_clicks: 180, potential_clicks: 520, click_uplift: 340, is_regional: true },
+      { query: "అల్ట్రా cement", position: 6.8, impressions: 4300, current_clicks: 145, potential_clicks: 430, click_uplift: 285, is_regional: true },
+      { query: "roof leakage repair", position: 5.5, impressions: 9800, current_clicks: 300, potential_clicks: 980, click_uplift: 680, is_regional: false },
+    ],
+  },
+  uplift: {
+    title: "Uplift Tracker — The Middle Band",
+    narrative:
+      "The single biggest middle-band win is /roof-leakage-solutions: position 4.3 but CTR 3.0% vs 7.0% expected — a title/meta rewrite worth ~3,800 clicks. Live SERP checks show three middle keywords within 1–2 positions of page one dominance; drfixit.co.in and civilread.com are the competitors to displace. Content team owns the CTR fixes, SEO owns the internal-link pushes.",
+    total_clicks_lost: 4210,
+    tracked_queries: 4,
+    ctr_gap: [
+      { page: "/roof-leakage-solutions", position: 4.3, impressions: 95000, ctr_pct: 3.0, expected_ctr_pct: 7.0, clicks_lost: 3800 },
+      { page: "/cement-grades", position: 6.1, impressions: 42300, ctr_pct: 3.1, expected_ctr_pct: 4.0, clicks_lost: 380 },
+      { page: "/vastu-tips", position: 8.9, impressions: 28100, ctr_pct: 1.9, expected_ctr_pct: 2.0, clicks_lost: 30 },
+    ],
+    flatliners: [
+      { page: "/home-loans", sessions: 7200, delta_pct: 2.9, impressions: 41000, position: 6.2, ctr_pct: 5.1 },
+      { page: "/foundation-info", sessions: 3100, delta_pct: 1.6, impressions: 18000, position: 9.8, ctr_pct: 2.1 },
+    ],
+    serp_tracker: [
+      { query: "best cement brand india", gsc_position: 9.1, live_position: 8, delta: 1.1, checked_gl: "in",
+        competitors_above: [
+          { position: 1, domain: "acc.in", title: "ACC Cement" },
+          { position: 2, domain: "ambujacement.com", title: "Ambuja Cement" },
+          { position: 3, domain: "jkcement.com", title: "JK Super Cement" }] },
+      { query: "concrete mix ratio guide", gsc_position: 12.5, live_position: 11, delta: 1.5, checked_gl: "in",
+        competitors_above: [
+          { position: 1, domain: "civilread.com", title: "Concrete Mix Ratios" },
+          { position: 2, domain: "theconstructor.org", title: "Grades of Concrete" }] },
+      { query: "waterproofing solution for terrace", gsc_position: 14.3, live_position: 13, delta: 1.3, checked_gl: "in",
+        competitors_above: [
+          { position: 1, domain: "drfixit.co.in", title: "Terrace Waterproofing" },
+          { position: 2, domain: "asianpaints.com", title: "SmartCare Terrace" }] },
+      { query: "cement plaster wall guide", gsc_position: 18.4, live_position: null, delta: null, checked_gl: "in",
+        competitors_above: [
+          { position: 1, domain: "civiljungle.com", title: "Wall Plastering Guide" },
+          { position: 2, domain: "happho.com", title: "Cement Plastering Steps" }] },
+    ],
+    internal_links: [
+      { query: "best cement brand india", target: "/best-cement-guide", anchor: "best cement brand india",
+        sources: [{ page: "/house-construction-guide", clicks: 390 }, { page: "/foundation-info", clicks: 115 }] },
+      { query: "waterproofing solution for terrace", target: "/roof-leakage-solutions", anchor: "terrace waterproofing solution",
+        sources: [{ page: "/waterproofing", clicks: 505 }] },
     ],
   },
   cannibalization: {

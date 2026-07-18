@@ -43,10 +43,13 @@ export interface ReportMeta {
 export interface Results {
   organic?: ModuleResult;
   journey?: ModuleResult;
+  path_exploration?: ModuleResult;
   funnel?: ModuleResult;
   heatmap?: ModuleResult;
   scroll?: ModuleResult;
   keywords?: ModuleResult;
+  keyword_opportunities?: ModuleResult;
+  uplift?: ModuleResult;
   cannibalization?: ModuleResult;
   ux_audit?: ModuleResult;
   hidden_insights?: ModuleResult;
@@ -58,20 +61,24 @@ export interface Results {
 }
 
 import {
-  TrendingUp, Route, Filter, MousePointerClick, ScrollText, KeyRound,
-  Swords, Zap, Gem, FileStack, type LucideIcon,
+  TrendingUp, Route, Waypoints, Filter, MousePointerClick, ScrollText, KeyRound,
+  Target, Crosshair, Swords, Zap, Gem, FileStack, type LucideIcon,
 } from "lucide-react";
 
 // The ordered module tabs — mirrors the Streamlit module structure exactly.
-export const MODULE_ORDER: { key: keyof Results; label: string; Icon: LucideIcon }[] = [
-  { key: "organic", label: "Organic Performance", Icon: TrendingUp },
-  { key: "journey", label: "User Journey", Icon: Route },
-  { key: "funnel", label: "Funnel Drop-off", Icon: Filter },
-  { key: "heatmap", label: "Heatmap / Click", Icon: MousePointerClick },
-  { key: "scroll", label: "Scroll Analysis", Icon: ScrollText },
-  { key: "keywords", label: "Keyword Intelligence", Icon: KeyRound },
-  { key: "cannibalization", label: "Cannibalization", Icon: Swords },
-  { key: "ux_audit", label: "UX & Speed Audit", Icon: Zap },
-  { key: "hidden_insights", label: "Hidden Insights", Icon: Gem },
-  { key: "indexation", label: "Indexation Health", Icon: FileStack },
+// `group` drives the sidebar section labels.
+export const MODULE_ORDER: { key: keyof Results; label: string; Icon: LucideIcon; group: string }[] = [
+  { key: "organic", label: "Organic Performance", Icon: TrendingUp, group: "Performance" },
+  { key: "journey", label: "User Journey", Icon: Route, group: "Performance" },
+  { key: "path_exploration", label: "Path Exploration", Icon: Waypoints, group: "Performance" },
+  { key: "funnel", label: "Funnel Drop-off", Icon: Filter, group: "Performance" },
+  { key: "heatmap", label: "Heatmap / Click", Icon: MousePointerClick, group: "Engagement" },
+  { key: "scroll", label: "Scroll Analysis", Icon: ScrollText, group: "Engagement" },
+  { key: "keywords", label: "Keyword Intelligence", Icon: KeyRound, group: "Keywords" },
+  { key: "keyword_opportunities", label: "Top Keyword Opportunity", Icon: Target, group: "Keywords" },
+  { key: "uplift", label: "Uplift Tracker", Icon: Crosshair, group: "Keywords" },
+  { key: "cannibalization", label: "Cannibalization", Icon: Swords, group: "Keywords" },
+  { key: "ux_audit", label: "UX & Speed Audit", Icon: Zap, group: "Health" },
+  { key: "hidden_insights", label: "Hidden Insights", Icon: Gem, group: "Health" },
+  { key: "indexation", label: "Indexation Health", Icon: FileStack, group: "Health" },
 ];

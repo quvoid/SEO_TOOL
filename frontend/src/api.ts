@@ -2,7 +2,13 @@
 // UI can be verified standalone. Otherwise it talks to the FastAPI backend via
 // the /api proxy (cookies are sent automatically with credentials: "include").
 import { MOCK_CLIENTS, MOCK_RESULTS, MOCK_USER } from "./mock";
-import type { Client, Results, User } from "./types";
+import { MODULE_ORDER, type Client, type Results, type User } from "./types";
+
+export interface RunProgress {
+  i: number;
+  t: number;
+  label: string;
+}
 
 // Live by default (production). Opt INTO demo data with VITE_USE_MOCK=true.
 export const USE_MOCK = import.meta.env.VITE_USE_MOCK === "true";
@@ -44,12 +50,14 @@ export const api = {
     clientId: string,
     range: { start: string; end: string; compareMode?: "auto" | "custom"; compareStart?: string; compareEnd?: string },
     onStatus?: (s: string) => void,
+    onProgress?: (p: RunProgress | null) => void,
   ): Promise<Results> {
     if (USE_MOCK) {
-      const steps = ["Organic Performance", "User Journey", "Keyword Intelligence", "UX & Speed Audit", "Executive Summary"];
-      for (const s of steps) {
-        onStatus?.(`Running — ${s}…`);
-        await delay(500);
+      const labels = [...MODULE_ORDER.map((m) => m.label), "Executive Summary"];
+      for (let i = 0; i < labels.length; i++) {
+        onStatus?.(`Running — ${labels[i]}…`);
+        onProgress?.({ i, t: labels.length, label: labels[i] });
+        await delay(350);
       }
       return MOCK_RESULTS;
     }
@@ -62,8 +70,9 @@ export const api = {
     // Poll
     for (;;) {
       await delay(2500);
-      const r = await req<{ status: string; results?: Results; error?: string }>(`/reports/${id}`);
+      const r = await req<{ status: string; results?: Results; error?: string; progress?: RunProgress }>(`/reports/${id}`);
       onStatus?.(`Status: ${r.status}…`);
+      onProgress?.(r.progress ?? null);
       if (r.status === "done" && r.results) return r.results;
       if (r.status === "failed") throw new Error(r.error || "Report failed");
     }

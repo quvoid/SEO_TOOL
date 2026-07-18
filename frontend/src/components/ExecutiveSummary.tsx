@@ -27,17 +27,27 @@ export function ExecutiveSummary({ exec, meta }: { exec?: ModuleResult; meta?: R
     <div>
       <h1 className="section-title">{cleanTitle(exec.title as string, "Executive Summary & Growth Strategy")}</h1>
       <div className="card">
-        <div className="muted">
-          {meta?.site} ·{" "}
-          {meta?.start_date && meta?.end_date ? `${meta.start_date} → ${meta.end_date}` : `last ${meta?.days} days`}{" "}
-          · generated {meta?.generated}{"  "}
+        <div className="exec-meta">
+          <span className="exec-site">{meta?.site}</span>
+          <span className="exec-sep" />
+          <span>{meta?.start_date && meta?.end_date ? `${meta.start_date} → ${meta.end_date}` : `last ${meta?.days} days`}</span>
+          <span className="exec-sep" />
+          <span>generated {meta?.generated}</span>
           <span className={`pill ${meta?.is_demo ? "demo" : "live"}`}>{meta?.is_demo ? "DEMO DATA" : "LIVE"}</span>
         </div>
         {points.length > 0 && (
-          <div className="findings">
-            {points.map((p, i) => (
-              <div className="finding" key={i}><span className="finding-dot" />{p}</div>
-            ))}
+          <div className="findings-grid">
+            {points.map((p, i) => {
+              // "Label: detail" points get a small uppercase label; the first
+              // point (the headline number) spans the full width.
+              const m = p.match(/^([^:]{3,40}):\s*(.+)$/);
+              return (
+                <div className={`finding-row ${i === 0 ? "wide" : ""}`} key={i}>
+                  {m && <span className="finding-k">{m[1]}</span>}
+                  <span className="finding-v">{m ? m[2] : p}</span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

@@ -328,6 +328,137 @@ def fetch_ga4_totals(
         raise exc
 
 
+def fetch_ga4_events(
+    property_id: str,
+    service_account_info: dict,
+    days: int = 30,
+    organic_only: bool = True,
+    end_date: str | None = None,
+    prev_start: str | None = None,
+    prev_end: str | None = None,
+) -> list[dict]:
+    """
+    Returns per-event totals (eventName × eventCount) for the current period,
+    ranked by count. Feeds the Path Exploration module, which reconstructs the
+    session_start → page_view → next-event flow from these counts.
+    """
+    cache_key = f"ga4_events_{property_id}_{days}_{organic_only}_{end_date}"
+    try:
+        from google.analytics.data_v1beta import BetaAnalyticsDataClient
+        from google.analytics.data_v1beta.types import (
+            RunReportRequest, Dimension, Metric, DateRange, FilterExpression, Filter
+        )
+
+        creds = _ga4_gsc_credentials(
+            service_account_info,
+            ["https://www.googleapis.com/auth/analytics.readonly"],
+        )
+        client = BetaAnalyticsDataClient(credentials=creds)
+        (cur_s, cur_e), _ = _period_dates(days, end_date, prev_start, prev_end)
+
+        dim_filter = None
+        if organic_only:
+            dim_filter = FilterExpression(
+                filter=Filter(
+                    field_name="sessionDefaultChannelGroup",
+                    string_filter=Filter.StringFilter(value="Organic Search")
+                )
+            )
+
+        req = RunReportRequest(
+            property=f"properties/{property_id}",
+            dimensions=[Dimension(name="eventName")],
+            metrics=[Metric(name="eventCount")],
+            date_ranges=[DateRange(start_date=cur_s.isoformat(), end_date=cur_e.isoformat())],
+            dimension_filter=dim_filter,
+            limit=100,
+        )
+        rows = []
+        for row in client.run_report(req).rows:
+            rows.append({
+                "event_name": row.dimension_values[0].value,
+                "event_count": int(float(row.metric_values[0].value or 0)),
+            })
+        rows.sort(key=lambda r: r["event_count"], reverse=True)
+        set_cached_value(cache_key, rows)
+        return rows
+    except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+        raise exc
+
+
+# ---------------------------------------------------------------------------
+# serper.dev — live Google SERP positions (middle-band keyword tracker)
+# ---------------------------------------------------------------------------
+def fetch_serper_positions(
+    queries: list[str],
+    site_url: str,
+    api_key: str,
+    gl: str = "in",
+    hl: str = "en",
+) -> list[dict]:
+    """
+    Live Google positions for a small set of queries via serper.dev.
+    All queries are BATCHED into a single request (1 credit per query, one
+    HTTP call) to conserve credits. For each query returns our live position
+    plus the competitors ranking above us. Falls back to the cache, then [],
+    on any failure — the Uplift Tracker renders fine without live data.
+    """
+    if not queries or not api_key:
+        return []
+    from urllib.parse import urlparse
+
+    domain = (urlparse(site_url).netloc or site_url).lower()
+    domain = domain[4:] if domain.startswith("www.") else domain
+    cache_key = f"serper_{gl}_{domain}_" + "_".join(sorted(queries))[:160]
+
+    def _host(link: str) -> str:
+        h = urlparse(link).netloc.lower()
+        return h[4:] if h.startswith("www.") else h
+
+    def _ours(link: str) -> bool:
+        h = _host(link)
+        return h == domain or h.endswith("." + domain)
+
+    try:
+        import requests
+        payload = [{"q": q, "gl": gl, "hl": hl, "num": 10} for q in queries]
+        resp = requests.post(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+            json=payload, timeout=30,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if isinstance(body, dict):
+            body = [body]
+
+        out = []
+        for q, item in zip(queries, body):
+            organic = item.get("organic") or []
+            our_pos, our_url = None, None
+            for r in organic:
+                if _ours(r.get("link", "")):
+                    our_pos, our_url = r.get("position"), r.get("link")
+                    break
+            above = [
+                {"position": r.get("position"), "title": r.get("title", ""),
+                 "domain": _host(r.get("link", ""))}
+                for r in organic
+                if not _ours(r.get("link", ""))
+                and (our_pos is None or (r.get("position") or 99) < our_pos)
+            ][:5]
+            out.append({
+                "query": q, "live_position": our_pos, "our_url": our_url,
+                "competitors_above": above, "checked_gl": gl,
+            })
+        set_cached_value(cache_key, out)
+        return out
+    except Exception:
+        cached = get_cached_value(cache_key)
+        return cached if cached is not None else []
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,3 @@
+
+# Linux-side virtualenv (local dev on non-Windows)
+.venv-linux/

@@ -24,6 +24,12 @@ from ..services.credentials import client_ga4_property_id, resolve_credential
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
+# In-process per-module progress for running reports. BackgroundTasks execute in
+# the same process, so the poll endpoint can read this directly — no schema
+# change needed. Under a multi-worker deploy the entry may be missing, in which
+# case the frontend gracefully falls back to the plain "running" status.
+_PROGRESS: dict[str, dict] = {}
+
 
 def _authorized(db: DbSession, user: User, client: Client) -> bool:
     # Internal team tool: any authenticated member can run/view reports for any brand.
@@ -55,6 +61,8 @@ def _run_job(report_id: str, days: int, model: str, analyst_name: str,
             client_cfg, credential, days, model, analyst_name,
             end_date=end_date, start_date=start_date,
             prev_start=prev_start, prev_end=prev_end,
+            on_progress=lambda i, t, label: _PROGRESS.__setitem__(
+                report_id, {"i": i, "t": t, "label": label}),
         )
         report.result_json = json.dumps(results, default=str)
         report.status = ReportStatus.done
@@ -67,6 +75,7 @@ def _run_job(report_id: str, days: int, model: str, analyst_name: str,
             report.error = str(exc)
             db.commit()
     finally:
+        _PROGRESS.pop(report_id, None)
         db.close()
 
 
@@ -152,6 +161,10 @@ def get_report(report_id: str, user: User = Depends(get_current_user),
 
     out: dict = {"id": report.id, "client_id": report.client_id,
                  "status": report.status.value, "error": report.error}
+    if report.status == ReportStatus.running:
+        progress = _PROGRESS.get(report_id)
+        if progress:
+            out["progress"] = progress
     if report.status == ReportStatus.done and report.result_json:
         out["results"] = json.loads(report.result_json)
     return out
