@@ -389,6 +389,98 @@ def fetch_ga4_events(
         raise exc
 
 
+# Canonical conversion-funnel stages (label -> GA4 event). Only the stages a
+# property actually records are kept, so shallow-tracking clients still get a
+# real funnel instead of the old hard-coded demo numbers.
+FUNNEL_STAGES = [
+    ("Sessions", "session_start"),
+    ("Viewed a page", "page_view"),
+    ("Engaged", "user_engagement"),
+    ("Started a form", "form_start"),
+    ("Submitted a form", "form_submit"),
+]
+
+
+def fetch_ga4_funnel(
+    property_id: str,
+    service_account_info: dict,
+    days: int = 30,
+    organic_only: bool = True,
+    end_date: str | None = None,
+) -> dict | list:
+    """
+    Builds a device-segmented conversion funnel from real GA4 event counts
+    (eventName x deviceCategory). Returns {mobile:[...], desktop:[...], ...}
+    when device data exists, otherwise a flat [{step, users}] list. Only the
+    funnel stages the property records are included.
+    """
+    cache_key = f"ga4_funnel_{property_id}_{days}_{organic_only}_{end_date}"
+    try:
+        from google.analytics.data_v1beta import BetaAnalyticsDataClient
+        from google.analytics.data_v1beta.types import (
+            RunReportRequest, Dimension, Metric, DateRange, FilterExpression, Filter
+        )
+
+        creds = _ga4_gsc_credentials(
+            service_account_info,
+            ["https://www.googleapis.com/auth/analytics.readonly"],
+        )
+        client = BetaAnalyticsDataClient(credentials=creds)
+        (cur_s, cur_e), _ = _period_dates(days, end_date, None, None)
+
+        dim_filter = None
+        if organic_only:
+            dim_filter = FilterExpression(
+                filter=Filter(
+                    field_name="sessionDefaultChannelGroup",
+                    string_filter=Filter.StringFilter(value="Organic Search")
+                )
+            )
+
+        req = RunReportRequest(
+            property=f"properties/{property_id}",
+            dimensions=[Dimension(name="eventName"), Dimension(name="deviceCategory")],
+            metrics=[Metric(name="eventCount")],
+            date_ranges=[DateRange(start_date=cur_s.isoformat(), end_date=cur_e.isoformat())],
+            dimension_filter=dim_filter,
+            limit=250,
+        )
+        # counts[event][device] = eventCount
+        counts: dict[str, dict[str, int]] = {}
+        for row in client.run_report(req).rows:
+            ev = row.dimension_values[0].value
+            dev = row.dimension_values[1].value
+            counts.setdefault(ev, {})[dev] = int(float(row.metric_values[0].value or 0))
+
+        # Keep only funnel stages the property actually records.
+        present = [(label, ev) for label, ev in FUNNEL_STAGES
+                   if sum(counts.get(ev, {}).values()) > 0]
+        if len(present) < 2:
+            return []
+
+        devices = ["mobile", "desktop", "tablet"]
+        device_funnel: dict[str, list] = {}
+        for dev in devices:
+            steps = [{"step": label, "users": counts.get(ev, {}).get(dev, 0)} for label, ev in present]
+            if sum(s["users"] for s in steps) > 0:
+                device_funnel[dev] = steps
+
+        # module_funnel detects device mode by the "mobile" key; if there's no
+        # mobile data, hand back a flat aggregated funnel instead.
+        if "mobile" in device_funnel:
+            result: dict | list = device_funnel
+        else:
+            result = [{"step": label, "users": sum(counts.get(ev, {}).values())} for label, ev in present]
+
+        set_cached_value(cache_key, result)
+        return result
+    except Exception as exc:
+        cached = get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+        raise exc
+
+
 # ---------------------------------------------------------------------------
 # serper.dev — live Google SERP positions (middle-band keyword tracker)
 # ---------------------------------------------------------------------------

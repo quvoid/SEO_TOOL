@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     serper_api_key: str | None = None
     # Country for SERP checks (serper `gl` param).
     serper_gl: str = "in"
+    # Starting serper.dev credit balance, so the profile popover can show
+    # "credits remaining" (balance minus tracked usage). Leave unset to show
+    # usage only.
+    serper_credit_balance: int | None = None
 
     @property
     def is_production(self) -> bool:
