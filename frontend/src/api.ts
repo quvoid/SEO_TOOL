@@ -25,10 +25,27 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface Account {
+  role: string;
+  permissions: string[];
+  serper: { balance: number | null; used: number; remaining: number | null };
+}
+
 export const api = {
   async me(): Promise<User> {
     if (USE_MOCK) return MOCK_USER;
     return req<User>("/auth/me");
+  },
+
+  async account(): Promise<Account> {
+    if (USE_MOCK) {
+      return {
+        role: "admin",
+        permissions: ["Run reports for any brand", "Manage members & access", "Add / edit Google credentials", "Add / remove brands"],
+        serper: { balance: 2500, used: 40, remaining: 2460 },
+      };
+    }
+    return req<Account>("/auth/account");
   },
 
   loginUrl(): string {

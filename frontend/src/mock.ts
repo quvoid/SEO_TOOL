@@ -289,7 +289,7 @@ export const MOCK_RESULTS: Results = {
     audit_rows: [
       { page: "/house-construction-guide", session_change_pct: -14, sessions: 3100, avg_position: 6.7, pagespeed_score: 45, lcp: 3.8, cls: 0.18, inp: 280, crux_lcp: 3.9, crux_cls: 0.19, crux_inp: 290, dead_clicks: 61, rage_clicks: 9, risk_level: "🔴 High" },
       { page: "/home-loans", session_change_pct: -19, sessions: 4200, avg_position: 5.1, pagespeed_score: 58, lcp: 3.1, cls: 0.09, inp: 190, crux_lcp: 3.2, crux_cls: 0.08, crux_inp: 180, dead_clicks: 214, rage_clicks: 47, risk_level: "🟡 Medium" },
-      { page: "/roof-leakage-solutions", session_change_pct: -34, sessions: 2600, avg_position: 8.2, pagespeed_score: 63, lcp: 2.7, cls: 0.06, inp: 150, crux_lcp: 2.6, crux_cls: 0.05, crux_inp: 140, dead_clicks: 96, rage_clicks: 12, risk_level: "🟡 Medium" },
+      { page: "/roof-leakage-solutions", session_change_pct: -34, sessions: 2600, avg_position: 8.2, pagespeed_score: null, lcp: null, cls: null, inp: null, crux_lcp: null, crux_cls: null, crux_inp: null, dead_clicks: 96, rage_clicks: 12, risk_level: "🟡 Medium" },
     ],
   },
   hidden_insights: {
@@ -306,16 +306,19 @@ export const MOCK_RESULTS: Results = {
   indexation: {
     title: "Module 9 — Indexation & Technical Health",
     narrative:
-      "94% of submitted URLs are indexed. The 6% gap is mostly thin tag pages — worth a noindex to preserve crawl budget.",
-    submitted_urls: 1240,
-    indexed_urls: 1166,
-    unindexed_urls: 74,
-    indexation_rate: 94.0,
-    crawled_not_indexed: 42,
-    discovered_not_indexed: 32,
+      "Of 12,400 submitted URLs, only ~4,050 receive Search impressions — a large index-bloat gap. Most of the unseen URLs are thin tag/param pages worth a noindex to reclaim crawl budget.",
+    submitted_urls: 12400,
+    indexed_urls: 4050,
+    unindexed_urls: 8350,
+    indexation_rate: 32.7,
+    pages_in_search: 4050,
+    indexed_source: "search_impressions",
+    sitemap_indexed_available: false,
+    crawled_not_indexed: 0,
+    discovered_not_indexed: 0,
     sitemaps: [
-      { path: "/sitemap-pages.xml", submitted: 520, indexed: 505 },
-      { path: "/sitemap-blog.xml", submitted: 720, indexed: 661 },
+      { path: "https://www.example.com/sitemap-pages.xml", submitted: 5200, indexed: 0 },
+      { path: "https://www.example.com/sitemap-blog.xml", submitted: 7200, indexed: 0 },
     ],
   },
 };

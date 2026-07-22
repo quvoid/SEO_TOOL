@@ -1,6 +1,9 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { LayoutDashboard, ListChecks, Search, LogOut, Download, History as HistoryIcon, Menu, Shield } from "lucide-react";
-import { USE_MOCK, api, type RunProgress } from "../api";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  LayoutDashboard, ListChecks, Search, LogOut, Download, History as HistoryIcon,
+  Menu, Shield, ShieldCheck, Zap, AlertTriangle, X,
+} from "lucide-react";
+import { USE_MOCK, api, type Account, type RunProgress } from "../api";
 import { MODULE_ORDER, type Client, type Results, type User } from "../types";
 import { ActionPlan } from "./ActionPlan";
 import { Card, Delta, Progress, StatTiles, fmt } from "./viz";
@@ -73,18 +76,30 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
   const [progress, setProgress] = useState<RunProgress | null>(null);
   const [loadedReportId, setLoadedReportId] = useState<string | null>(null);
   const [prevResults, setPrevResults] = useState<Results | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [skipConfirm, setSkipConfirm] = useState(false);
+  const [dontAsk, setDontAsk] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [account, setAccount] = useState<Account | null>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
 
   const loadHistory = useCallback(() => {
     api.history().then(setHistory).catch(() => {});
   }, []);
 
-  useEffect(() => {
+  // Refetch the brand list, keeping the current selection if it still exists
+  // (so adding/removing a brand in Admin reflects in the run dropdown live).
+  const loadClients = useCallback(() => {
     api.clients().then((c) => {
       setClients(c);
-      if (c[0]) setClientId(c[0].id);
-    });
+      setClientId((cur) => (cur && c.some((x) => x.id === cur) ? cur : (c[0]?.id ?? "")));
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadClients();
     loadHistory();
-  }, [loadHistory]);
+  }, [loadClients, loadHistory]);
 
   const activeClient = useMemo(() => clients.find((c) => c.id === clientId), [clients, clientId]);
 
@@ -127,6 +142,42 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
     }
   }
 
+  // Gate a live run behind the cost confirmation. Demo runs are free, and the
+  // "don't ask again" choice skips it for the rest of the session.
+  function requestRun() {
+    if (!clientId || running) return;
+    if (activeClient?.use_demo_data || skipConfirm) { run(); return; }
+    setConfirmOpen(true);
+  }
+
+  function confirmRun() {
+    if (dontAsk) setSkipConfirm(true);
+    setConfirmOpen(false);
+    run();
+  }
+
+  function toggleProfile() {
+    setProfileOpen((o) => !o);
+    if (!account) api.account().then(setAccount).catch(() => {});
+  }
+
+  // Close the profile popover on outside-click / Escape.
+  useEffect(() => {
+    if (!profileOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) setProfileOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setProfileOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
+  }, [profileOpen]);
+
+  const rangeDays = useMemo(() => {
+    if (!range.start || !range.end) return 0;
+    return Math.round((new Date(range.end).getTime() - new Date(range.start).getTime()) / 86400000) + 1;
+  }, [range]);
+
   async function openReport(id: string) {
     setRunning(true); setResults(null); setError(""); setPrevResults(null); setTab("exec");
     setStatus("Loading saved report…");
@@ -136,6 +187,9 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
         setResults(r);
         setLoadedReportId(id);
         const rec = history.find((h) => h.id === id);
+        // Point the client selector at the report's brand so the header matches
+        // what's on screen (a saved report can be from any client).
+        if (rec?.client_id) setClientId(rec.client_id);
         const prevRec = rec && history.find(
           (h) => h.status === "done" && h.client_id === rec.client_id && h.created_at < rec.created_at,
         );
@@ -236,12 +290,59 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
               <div className="page-sub">{activeClient ? activeClient.display_name : "Select a client to begin"}</div>
             </div>
           </div>
-          <div className="user-chip">
-            <div className="who">
-              <div className="n">{user.name}</div>
-              <div className="r">{user.role}</div>
-            </div>
-            <div className="avatar">{user.name.slice(0, 1).toUpperCase()}</div>
+          <div className="profile-wrap" ref={profileRef}>
+            <button className="user-chip" onClick={toggleProfile} aria-haspopup="true" aria-expanded={profileOpen}>
+              <div className="who">
+                <div className="n">{user.name}</div>
+                <div className="r">{user.role}</div>
+              </div>
+              <div className="avatar">{user.name.slice(0, 1).toUpperCase()}</div>
+            </button>
+            {profileOpen && (
+              <div className="profile-pop">
+                <div className="pp-head">
+                  <div className="avatar lg">{user.name.slice(0, 1).toUpperCase()}</div>
+                  <div>
+                    <div className="pp-name">{user.name}</div>
+                    <div className="pp-email">{user.email}</div>
+                  </div>
+                </div>
+
+                <div className="pp-section">
+                  <div className="pp-label"><Zap size={13} /> serper.dev credits</div>
+                  {account?.serper ? (
+                    account.serper.remaining != null ? (
+                      <>
+                        <div className="pp-credits">
+                          <span className="pp-credits-num">{fmt(account.serper.remaining)}</span>
+                          <span className="pp-credits-unit">remaining</span>
+                        </div>
+                        <div className="pp-credits-bar">
+                          <div className="pp-credits-fill" style={{
+                            width: `${Math.max(2, Math.min(100, (account.serper.remaining / (account.serper.balance || 1)) * 100))}%`,
+                          }} />
+                        </div>
+                        <div className="pp-muted">{fmt(account.serper.used)} used of {fmt(account.serper.balance)} · ~10 per report</div>
+                      </>
+                    ) : (
+                      <div className="pp-muted">{fmt(account.serper.used)} credits used · set a balance to see what's left</div>
+                    )
+                  ) : (
+                    <div className="pp-muted">Loading…</div>
+                  )}
+                </div>
+
+                <div className="pp-section">
+                  <div className="pp-label"><ShieldCheck size={13} /> Permissions · <b>{account?.role ?? user.role}</b></div>
+                  <ul className="pp-perms">
+                    {(account?.permissions ?? []).map((p, i) => <li key={i}>{p}</li>)}
+                    {!account && <li className="pp-muted">Loading…</li>}
+                  </ul>
+                </div>
+
+                <button className="pp-signout" onClick={onLogout}><LogOut size={14} /> Sign out</button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -267,7 +368,7 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
                 <label>Date range</label>
                 <DateRange value={range} onChange={setRange} />
               </div>
-              <button className="btn sm run-btn" onClick={run} disabled={running || !clientId}>
+              <button className="btn sm run-btn" onClick={requestRun} disabled={running || !clientId}>
                 {running ? <><span className="spinner" />&nbsp; Running…</> : "Run Report"}
               </button>
             </div>
@@ -335,8 +436,35 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
         )}
 
         {tab === "onpage" && <OnPage />}
-        {tab === "admin" && user.role === "admin" && <Admin />}
+        {tab === "admin" && user.role === "admin" && <Admin onClientsChanged={loadClients} />}
       </main>
+
+      {confirmOpen && (
+        <div className="modal-scrim" onClick={() => setConfirmOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-x" onClick={() => setConfirmOpen(false)} aria-label="Close"><X size={16} /></button>
+            <div className="modal-icon"><AlertTriangle size={20} /></div>
+            <h2 className="modal-title">Run a live report?</h2>
+            <p className="modal-body">
+              This runs the full analysis for <b>{activeClient?.display_name}</b> over the last <b>{rangeDays} days</b> — it spends real quota:
+            </p>
+            <ul className="modal-cost">
+              <li><Zap size={13} /> {MODULE_ORDER.length + 1} AI analyses (Gemini)</li>
+              <li><Zap size={13} /> ~10 live-SERP credits (serper.dev)</li>
+              <li><Zap size={13} /> GA4 · Search Console · PageSpeed API calls</li>
+            </ul>
+            <p className="modal-note">Takes 60–90 seconds. You can’t undo the spend once it starts.</p>
+            <label className="modal-check">
+              <input type="checkbox" checked={dontAsk} onChange={(e) => setDontAsk(e.target.checked)} />
+              Don’t ask again this session
+            </label>
+            <div className="modal-actions">
+              <button className="preset" onClick={() => setConfirmOpen(false)}>No, cancel</button>
+              <button className="btn sm" onClick={confirmRun}>Yes, run report</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
