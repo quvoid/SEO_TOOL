@@ -419,7 +419,14 @@ function UxAudit({ mod }: { mod: ModuleResult }) {
       {rows.map((r, i) => (
         <Card key={i}>
           <div className="ux-row">
-            <ScoreRing score={n(r.pagespeed_score)} label="PageSpeed" />
+            {r.pagespeed_score == null ? (
+              <div className="ps-na" title="PageSpeed couldn't analyze this URL — API rate-limit or page unreachable. Not a 0 score.">
+                <span className="ps-na-v">n/a</span>
+                <span className="ps-na-l">PageSpeed</span>
+              </div>
+            ) : (
+              <ScoreRing score={n(r.pagespeed_score)} label="PageSpeed" />
+            )}
             <div className="ux-body">
               <div className="ux-path" title={r.page}>{shortUrl(r.page)}</div>
               <div className="ux-sub">
@@ -484,42 +491,57 @@ function Hidden({ mod }: { mod: ModuleResult }) {
 function Indexation({ mod }: { mod: ModuleResult }) {
   const submitted = n(mod.submitted_urls), indexed = n(mod.indexed_urls), rate = n(mod.indexation_rate);
   const sitemaps = arr(mod.sitemaps);
-  const color = rate >= 90 ? "var(--good)" : rate >= 75 ? "var(--warn)" : "var(--bad)";
+  // Google deprecated the Sitemaps API "indexed" count; when it's unavailable
+  // the backend supplies a Search-impressions proxy instead. Label honestly.
+  const proxy = mod.sitemap_indexed_available === false;
+  const indexedLabel = proxy ? "In Search" : "Indexed";
+  const color = rate >= 90 ? "var(--good)" : rate >= 50 ? "var(--warn)" : "var(--bad)";
   return (
     <div>
       <Title mod={mod} fallback="Indexation & Technical Health" />
+      {proxy && (
+        <div className="banner" style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <Info size={15} style={{ marginTop: 1, flexShrink: 0 }} />
+          <span>Google no longer reports per-sitemap “indexed” counts. Showing <b>pages that receive Search impressions</b> — a reliable lower bound of what’s actually indexed.</span>
+        </div>
+      )}
       <div className="two-col">
-        <Card title="Indexation rate">
+        <Card title={proxy ? "Pages in Search vs submitted" : "Indexation rate"}>
           <div className="donut-row">
             <Donut size={140}
               segments={[
-                { label: "Indexed", value: indexed, color },
-                { label: "Not indexed", value: Math.max(0, submitted - indexed), color: "var(--line)" },
+                { label: indexedLabel, value: indexed, color },
+                { label: "Not seen", value: Math.max(0, submitted - indexed), color: "var(--line)" },
               ]}
-              center={<><div className="donut-big" style={{ color }}>{fmt(rate)}%</div><div className="donut-small">indexed</div></>}
+              center={<><div className="donut-big" style={{ color }}>{fmt(rate)}%</div><div className="donut-small">{proxy ? "in search" : "indexed"}</div></>}
             />
             <div className="legend">
-              <div className="lg"><span className="dot" style={{ background: color }} />Indexed <b>{fmt(indexed)}</b></div>
-              <div className="lg"><span className="dot" style={{ background: "var(--line)" }} />Unindexed <b>{fmt(mod.unindexed_urls)}</b></div>
+              <div className="lg"><span className="dot" style={{ background: color }} />{indexedLabel} <b>{fmt(indexed)}</b></div>
+              <div className="lg"><span className="dot" style={{ background: "var(--line)" }} />Not seen <b>{fmt(mod.unindexed_urls)}</b></div>
+              {proxy && <div className="muted" style={{ marginTop: 6 }}>A page with impressions is definitely indexed; the true number may be a bit higher.</div>}
             </div>
           </div>
         </Card>
         <Card title="Crawl status">
           <StatTiles tiles={[
-            { k: "Submitted", v: fmt(submitted) },
+            { k: "URLs submitted", v: fmt(submitted) },
+            { k: <span title="Pages that received at least one Search impression in the period">Pages in Search</span>, v: fmt(mod.pages_in_search) },
             { k: "Crawled · not indexed", v: fmt(mod.crawled_not_indexed), cls: "bad" },
-            { k: "Discovered · not indexed", v: fmt(mod.discovered_not_indexed), cls: "bad" },
           ]} />
         </Card>
       </div>
       {sitemaps.length > 0 && (
-        <Card title="Sitemaps">
+        <Card title="Sitemaps" sub={proxy ? "Submitted counts are reliable; Google no longer exposes per-sitemap indexed counts" : undefined}>
           <div className="table-scroll"><table className="data num">
-            <thead><tr><th>Sitemap</th><th>Submitted</th><th>Indexed</th><th>Rate</th></tr></thead>
+            <thead><tr><th>Sitemap</th><th>Submitted</th>{!proxy && <><th>Indexed</th><th>Rate</th></>}</tr></thead>
             <tbody>
               {sitemaps.map((s: any, i: number) => (
-                <tr key={i}><td>{s.path}</td><td>{fmt(s.submitted)}</td><td>{fmt(s.indexed)}</td>
-                  <td>{s.submitted ? Math.round((s.indexed / s.submitted) * 100) : 0}%</td></tr>
+                <tr key={i}>
+                  <td className="trunc" title={s.path}>{shortUrl(s.path)}</td>
+                  <td>{fmt(s.submitted)}</td>
+                  {!proxy && <><td>{fmt(s.indexed)}</td>
+                    <td>{s.submitted ? Math.round((s.indexed / s.submitted) * 100) : 0}%</td></>}
+                </tr>
               ))}
             </tbody>
           </table></div>

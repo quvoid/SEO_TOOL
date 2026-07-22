@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { UserPlus, KeyRound, Building2, Trash2 } from "lucide-react";
 import { api } from "../api";
 
-export function Admin() {
+export function Admin({ onClientsChanged }: { onClientsChanged?: () => void } = {}) {
   const [users, setUsers] = useState<any[]>([]);
   const [creds, setCreds] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
@@ -31,7 +31,7 @@ export function Admin() {
     catch (e) { flash("Error: " + (e as Error).message); }
   }
   async function addBrand() {
-    try { await api.adminAddBrand({ ...b, organic_only: true }); setB({ display_name: "", ga4_property_id: "", gsc_site_url: "", credential_id: "" }); flash("Brand added"); load(); }
+    try { await api.adminAddBrand({ ...b, organic_only: true }); setB({ display_name: "", ga4_property_id: "", gsc_site_url: "", credential_id: "" }); flash("Brand added"); load(); onClientsChanged?.(); }
     catch (e) { flash("Error: " + (e as Error).message); }
   }
 
@@ -118,7 +118,7 @@ export function Admin() {
                 <td>{x.credential_label || "—"}</td>
                 <td style={{ textAlign: "right" }}>
                   <button className="btn ghost" title="Delete brand"
-                    onClick={() => confirm(`Delete ${x.display_name}?`) && api.adminDeleteBrand(x.id).then(load)}>
+                    onClick={() => confirm(`Delete ${x.display_name}?`) && api.adminDeleteBrand(x.id).then(() => { load(); onClientsChanged?.(); })}>
                     <Trash2 size={14} />
                   </button>
                 </td>
