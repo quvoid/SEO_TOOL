@@ -10,19 +10,36 @@ BackgroundTasks without changing the API contract.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session as DbSession
 
 from ..db import SessionLocal, get_db
-from ..models import Client, ClientAccess, Report, ReportStatus, Role, User
+from ..models import AppMetric, Client, ClientAccess, Report, ReportStatus, Role, User
 from ..schemas import ReportCreate, ReportOut
 from ..security.sessions import get_current_user
 from ..services import reports as report_service
 from ..services.credentials import client_ga4_property_id, resolve_credential
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+# A report already pending/running for a client blocks a duplicate run for this
+# long; older ones are treated as abandoned (crashed job) so a client is never
+# locked out permanently.
+_DUP_WINDOW_MINUTES = 15
+
+
+def _bump_metric(db: DbSession, key: str, amount: int) -> None:
+    """Increment a persistent counter (e.g. serper credits spent)."""
+    m = db.get(AppMetric, key)
+    if m is None:
+        m = AppMetric(key=key, value=0)
+        db.add(m)
+    m.value = (m.value or 0) + amount
+    m.updated_at = dt.datetime.now(dt.timezone.utc)
+    db.commit()
 
 # In-process per-module progress for running reports. BackgroundTasks execute in
 # the same process, so the poll endpoint can read this directly — no schema
@@ -67,6 +84,10 @@ def _run_job(report_id: str, days: int, model: str, analyst_name: str,
         report.result_json = json.dumps(results, default=str)
         report.status = ReportStatus.done
         db.commit()
+        # Track serper.dev credit spend so the profile can show what's left.
+        spent = int((results.get("_meta") or {}).get("serper_credits", 0) or 0)
+        if spent:
+            _bump_metric(db, "serper_credits_used", spent)
     except Exception as exc:  # noqa: BLE001
         db.rollback()
         report = db.get(Report, report_id)
@@ -87,6 +108,21 @@ def create_report(body: ReportCreate, background: BackgroundTasks,
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Client not found")
     if not _authorized(db, user, client):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not authorized for this client")
+
+    # Duplicate-run guard: if a report for this client is already pending or
+    # running (recently), return it instead of firing another billable job.
+    # Protects against double-clicks, two tabs, and retries.
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=_DUP_WINDOW_MINUTES)
+    inflight = (
+        db.query(Report)
+        .filter(Report.client_id == client.id,
+                Report.status.in_([ReportStatus.pending, ReportStatus.running]),
+                Report.created_at >= cutoff)
+        .order_by(Report.created_at.desc())
+        .first()
+    )
+    if inflight is not None:
+        return ReportOut(id=inflight.id, client_id=client.id, status=inflight.status.value)
 
     # Resolve the effective window: a custom start/end range takes precedence
     # over `days`. days = inclusive length of the range.

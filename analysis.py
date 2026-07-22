@@ -1560,35 +1560,59 @@ def module_cannibalization(gsc_pairs: list[dict], api_key: str | None, model: st
 # ===========================================================================
 # Module 9 — Indexation Health
 # ===========================================================================
-def module_indexation_health(indexation_data: dict, api_key: str | None, model: str) -> dict:
+def module_indexation_health(indexation_data: dict, api_key: str | None, model: str,
+                             gsc_rows: list | None = None) -> dict:
     """
     Analyse sitemap indexation health from GSC Sitemaps API data.
+
+    Google DEPRECATED the per-sitemap "indexed" count — the Sitemaps API now
+    returns 0 for most properties, which made this module report a misleading
+    "0% indexed". When that count is missing we fall back to a real signal:
+    pages that receive Search impressions are, by definition, indexed.
     """
     submitted = indexation_data.get("submitted_urls", 0)
-    indexed = indexation_data.get("indexed_urls", 0)
-    rate = indexation_data.get("indexation_rate", 0.0)
+    sitemap_indexed = indexation_data.get("indexed_urls", 0)
     crawled_not_indexed = indexation_data.get("crawled_not_indexed", 0)
     discovered_not_indexed = indexation_data.get("discovered_not_indexed", 0)
     sitemaps = indexation_data.get("sitemaps", [])
-    unindexed = submitted - indexed
+
+    # Real indexed signal: distinct pages with any Search impressions.
+    pages_in_search = len([p for p in (gsc_rows or []) if (p.get("impressions", 0) or 0) > 0])
+
+    sitemap_indexed_available = sitemap_indexed > 0
+    if sitemap_indexed_available:
+        indexed = sitemap_indexed
+        indexed_source = "sitemap"
+    else:
+        # Sitemaps API didn't report indexed counts — use the Search proxy.
+        indexed = pages_in_search
+        indexed_source = "search_impressions"
+    rate = round(indexed / submitted * 100, 1) if submitted else 0.0
+    unindexed = max(0, submitted - indexed)
 
     sm_lines = "\n".join(
-        f"  - {s['path']}: submitted {s['submitted']:,}, indexed {s['indexed']:,} "
-        f"({int(s['indexed']/s['submitted']*100) if s['submitted'] else 0}%)"
+        f"  - {s['path']}: submitted {s['submitted']:,}"
+        + (f", indexed {s['indexed']:,}" if s.get("indexed") else "")
         for s in sitemaps
     ) or "  - No sitemaps found"
 
+    indexed_note = (
+        f"- Indexed by Google: {indexed:,} ({rate:.1f}% of submitted)\n"
+        if sitemap_indexed_available else
+        f"- Pages receiving Search impressions (indexed proxy — Google no longer "
+        f"reports per-sitemap indexed counts): {indexed:,}\n"
+    )
     prompt = (
         f"Indexation health summary for the site:\n"
         f"- Total URLs submitted in sitemaps: {submitted:,}\n"
-        f"- Total indexed by Google: {indexed:,} ({rate:.1f}% rate)\n"
-        f"- Unindexed from sitemaps: {unindexed:,}\n"
+        f"{indexed_note}"
         f"- Crawled but not indexed: {crawled_not_indexed:,}\n"
         f"- Discovered but not indexed: {discovered_not_indexed:,}\n"
         f"Sitemap breakdown:\n{sm_lines}\n\n"
-        "Diagnose the indexation health. If the indexation rate is below 85%, explain the most likely "
-        "causes (thin content, duplicate pages, soft 404s, crawl budget issues, orphaned pages) and "
-        "give 3 specific, prioritized technical fixes. Flag if crawled-not-indexed is disproportionately high."
+        "Diagnose the indexation health. A large gap between submitted URLs and pages "
+        "actually appearing in Search usually means thin/duplicate content, soft 404s, "
+        "or crawl-budget waste. Give 3 specific, prioritized technical fixes. If the "
+        "sitemap is enormous relative to pages in Search, flag likely index bloat."
     )
     narrative = reasoning(prompt, api_key, model)
 
@@ -1598,6 +1622,9 @@ def module_indexation_health(indexation_data: dict, api_key: str | None, model: 
         "indexed_urls": indexed,
         "unindexed_urls": unindexed,
         "indexation_rate": rate,
+        "pages_in_search": pages_in_search,
+        "indexed_source": indexed_source,
+        "sitemap_indexed_available": sitemap_indexed_available,
         "crawled_not_indexed": crawled_not_indexed,
         "discovered_not_indexed": discovered_not_indexed,
         "sitemaps": sitemaps,

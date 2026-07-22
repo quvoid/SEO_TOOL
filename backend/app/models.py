@@ -18,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -146,4 +147,14 @@ class ApiCache(Base):
 
     cache_key: Mapped[str] = mapped_column(String(500), primary_key=True)
     cache_value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AppMetric(Base):
+    """Small persistent key/counter store — e.g. cumulative serper.dev credits
+    spent across all report runs, so the UI can show credits remaining."""
+    __tablename__ = "app_metrics"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)

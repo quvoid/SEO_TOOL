@@ -19,6 +19,41 @@ _settings = get_settings()
 _RATE_GAP_SECONDS = 6
 
 
+def _host(url: str) -> str:
+    """Bare host of a URL/site, lowercased, without a leading www."""
+    from urllib.parse import urlparse
+    h = (urlparse(url).netloc or url).lower().strip()
+    return h[4:] if h.startswith("www.") else h
+
+
+def _clarity_for_site(rows: list[dict], site: str) -> list[dict]:
+    """
+    Clarity uses a single global export token that belongs to ONE site. Keep
+    only rows whose URL is on this client's own domain, so one brand's Clarity
+    data never leaks into another brand's report. Rows without a host (path-only)
+    are kept — they can't be disproved. If nothing matches, Clarity is treated
+    as not connected for this client and the modules show their fallback state.
+    """
+    dom = _host(site)
+    if not dom:
+        return rows
+    kept = []
+    for r in rows or []:
+        rh = _host(r.get("url", ""))
+        if not rh or rh == dom or rh.endswith("." + dom) or dom.endswith("." + rh):
+            kept.append(r)
+    return kept
+
+
+def _funnel_from_events(events: list[dict]) -> list[dict]:
+    """Fallback flat funnel built from the already-fetched event totals, used
+    when the device-segmented GA4 funnel query returns nothing."""
+    by = {e.get("event_name"): e.get("event_count", 0) for e in (events or [])}
+    steps = [{"step": label, "users": by[ev]}
+             for label, ev in connectors.FUNNEL_STAGES if by.get(ev, 0)]
+    return steps if len(steps) >= 2 else []
+
+
 def load_data(client_cfg: dict, service_account_info: dict, days: int,
               end_date: str | None = None, prev_start: str | None = None,
               prev_end: str | None = None) -> dict:
@@ -71,13 +106,24 @@ def load_data(client_cfg: dict, service_account_info: dict, days: int,
     clarity = []
     token = _settings.clarity_api_token
     if token and token not in ("CLARITY_DATA_EXPORT_TOKEN", ""):
-        clarity = _try(lambda: connectors.fetch_clarity_insights(token), [], "Clarity error")
+        raw_clarity = _try(lambda: connectors.fetch_clarity_insights(token), [], "Clarity error")
+        # Scope the global Clarity token's data to THIS client's domain.
+        clarity = _clarity_for_site(raw_clarity, site)
+        if raw_clarity and not clarity:
+            errors.append("Clarity: token belongs to a different site — not shown for this client")
+
+    # Real device-segmented funnel from GA4 events; fall back to a flat funnel
+    # derived from the event totals (never the demo numbers for a live client).
+    funnel = _try(lambda: connectors.fetch_ga4_funnel(prop, sa, days, organic_only, end_date=end_date),
+                  [], "GA4 funnel error")
+    if not funnel:
+        funnel = _funnel_from_events(events)
 
     return {
         "ga4": ga4, "ga4_totals": ga4_totals, "events": events, "gsc": gsc,
         "gsc_queries": gsc_queries, "gsc_queries_prev": gsc_queries_prev,
         "gsc_pairs": gsc_pairs, "clarity": clarity,
-        "funnel": demo_data.funnel_steps_by_device(),
+        "funnel": funnel,
         "indexation": indexation, "site": site, "is_demo": False, "errors": errors,
     }
 
@@ -130,10 +176,12 @@ def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model:
 
     # Live SERP checks (serper.dev, one batched request) — ONLY the middle-band
     # keywords worth uplifting; winners and no-hopers aren't worth credits.
+    serper_credits = 0  # serper.dev bills ~1 credit per query in the batch
     if data.get("is_demo"):
         serp_data = demo_data.serper_positions()
     elif _settings.serper_api_key:
         middle_qs = analysis.top_striking_queries(data["gsc_queries"], n=10)
+        serper_credits = len(middle_qs)
         serp_data = connectors.fetch_serper_positions(
             middle_qs, data["site"], _settings.serper_api_key, gl=_settings.serper_gl)
     else:
@@ -157,7 +205,8 @@ def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model:
         ("ux_audit", "UX & Speed Audit", lambda: analysis.module_ux_audit(
             data["ga4"], data["gsc"], data["clarity"], pagespeed_data, gk, model, crux_data=crux_data, grok_key=grok)),
         ("hidden_insights", "Hidden Insights", lambda: analysis.module_hidden_insights(data["ga4"], data["gsc"], data["clarity"], gk, model)),
-        ("indexation", "Indexation Health", lambda: analysis.module_indexation_health(data["indexation"], gk, model)),
+        ("indexation", "Indexation Health", lambda: analysis.module_indexation_health(
+            data["indexation"], gk, model, gsc_rows=data["gsc"])),
     ]
     total_steps = len(steps) + 1  # + executive summary
 
@@ -183,6 +232,7 @@ def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model:
         "generated": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "analyst": analyst_name,
         "errors": data.get("errors", []),
+        "serper_credits": serper_credits,
     }
     results["_ga4_totals"] = data.get("ga4_totals", {})
     return results

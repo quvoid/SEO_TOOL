@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session as DbSession
 
 from ..db import get_db
-from ..models import Role, User
+from ..models import AppMetric, Role, User
 from ..schemas import UserOut
 from ..security.sessions import (
     COOKIE_NAME,
@@ -123,3 +123,40 @@ def logout(response: Response, ga_session: str | None = None,
 def me(user: User = Depends(get_current_user)) -> UserOut:
     return UserOut(id=user.id, email=user.email, name=user.name,
                    picture=user.picture, role=user.role.value)
+
+
+# What each role can do — shown in the profile popover.
+_PERMISSIONS = {
+    Role.admin: [
+        "Run reports for any brand",
+        "Manage members & access",
+        "Add / edit Google credentials",
+        "Add / remove brands",
+    ],
+    Role.analyst: [
+        "Run reports for any brand",
+        "View saved reports",
+        "On-Page SEO tool",
+    ],
+    Role.viewer: [
+        "View saved reports (read-only)",
+    ],
+}
+
+
+@router.get("/account")
+def account(user: User = Depends(get_current_user), db: DbSession = Depends(get_db)):
+    """Profile popover data: role, what it permits, and serper.dev credits."""
+    used_row = db.get(AppMetric, "serper_credits_used")
+    used = used_row.value if used_row else 0
+    balance = _settings.serper_credit_balance
+    remaining = (balance - used) if balance is not None else None
+    return {
+        "role": user.role.value,
+        "permissions": _PERMISSIONS.get(user.role, _PERMISSIONS[Role.analyst]),
+        "serper": {
+            "balance": balance,
+            "used": used,
+            "remaining": remaining,
+        },
+    }
