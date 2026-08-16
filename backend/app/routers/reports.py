@@ -53,11 +53,46 @@ def _authorized(db: DbSession, user: User, client: Client) -> bool:
     return client is not None
 
 
+def _mark_failed(report_id: str, error: str) -> None:
+    """
+    Best-effort failure write on a GUARANTEED-FRESH session.
+
+    Never reuse the session that just failed to write results — if its
+    connection died (see _run_job's docstring), rollback/get/commit on that
+    same session usually dies too, and since nothing wraps the old code's
+    except block, that second failure went uncaught and left the report
+    stuck at "running" forever with no error shown.
+    """
+    db = SessionLocal()
+    try:
+        report = db.get(Report, report_id)
+        if report:
+            report.status = ReportStatus.failed
+            report.error = error
+            db.commit()
+    except Exception:  # noqa: BLE001 — failure reporting must never itself crash
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _run_job(report_id: str, days: int, model: str, analyst_name: str,
              end_date: str | None = None, start_date: str | None = None,
              prev_start: str | None = None, prev_end: str | None = None,
              with_ai: bool = False) -> None:
-    """Background worker — owns its own DB session (request session is closed)."""
+    """
+    Background worker. Opens a DB session only for the brief writes at the
+    start and end — NEVER held open across the multi-minute pipeline between
+    them.
+
+    Previously one session stayed open (and idle — the pipeline itself does no
+    DB work) for the whole run. `pool_pre_ping` only validates a connection
+    when it's newly checked OUT of the pool; it does nothing for a connection
+    a session already holds open and unused for minutes. A managed Postgres
+    provider with an idle/autosuspend connection kill (Neon does this) would
+    silently sever that connection mid-run, and the final multi-hundred-KB
+    write then surfaced as a raw SSL error instead of a clean reconnect.
+    """
     db = SessionLocal()
     try:
         report = db.get(Report, report_id)
@@ -75,7 +110,16 @@ def _run_job(report_id: str, days: int, model: str, analyst_name: str,
             "brand_terms": client.brand_terms or "",
         }
         credential = resolve_credential(client)
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        db.close()
+        _mark_failed(report_id, str(exc))
+        _PROGRESS.pop(report_id, None)
+        return
+    else:
+        db.close()  # connection released BEFORE the multi-minute API/AI work
 
+    try:
         results = report_service.run_report(
             client_cfg, credential, days, model, analyst_name,
             end_date=end_date, start_date=start_date,
@@ -83,6 +127,19 @@ def _run_job(report_id: str, days: int, model: str, analyst_name: str,
             on_progress=lambda i, t, label: _PROGRESS.__setitem__(
                 report_id, {"i": i, "t": t, "label": label}),
         )
+    except Exception as exc:  # noqa: BLE001
+        _mark_failed(report_id, str(exc))
+        _PROGRESS.pop(report_id, None)
+        return
+
+    # Fresh checkout for the final write — pool_pre_ping validates THIS
+    # connection, transparently reconnecting if the provider dropped it
+    # during the pipeline (exactly the case this restructuring avoids above).
+    db = SessionLocal()
+    try:
+        report = db.get(Report, report_id)
+        if report is None:
+            return
         report.result_json = json.dumps(results, default=str)
         report.status = ReportStatus.done
         db.commit()
@@ -92,11 +149,7 @@ def _run_job(report_id: str, days: int, model: str, analyst_name: str,
             _bump_metric(db, "serper_credits_used", spent)
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        report = db.get(Report, report_id)
-        if report:
-            report.status = ReportStatus.failed
-            report.error = str(exc)
-            db.commit()
+        _mark_failed(report_id, str(exc))
     finally:
         _PROGRESS.pop(report_id, None)
         db.close()

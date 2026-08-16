@@ -26,7 +26,15 @@ def _normalize_db_url(url: str) -> str:
     return url
 
 
-engine = create_engine(_normalize_db_url(_settings.database_url), pool_pre_ping=True, future=True)
+engine = create_engine(
+    _normalize_db_url(_settings.database_url),
+    pool_pre_ping=True,   # validates a connection when checked OUT of the pool
+    pool_recycle=280,     # ...but a connection sitting IN the pool unused isn't
+                          # checked out, so also proactively retire connections
+                          # before providers with short idle/autosuspend windows
+                          # (Neon's free tier, notably) can silently kill them.
+    future=True,
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 
