@@ -44,6 +44,16 @@ class BrandIn(BaseModel):
     organic_only: bool = True
     use_demo_data: bool = False
     credential_id: str | None = None
+    # Comma-separated brand variants. Empty = derive from the domain.
+    brand_terms: str = ""
+
+
+class BrandPatch(BaseModel):
+    """Partial update — only the fields present are written."""
+    display_name: str | None = None
+    gsc_site_url: str | None = None
+    organic_only: bool | None = None
+    brand_terms: str | None = None
 
 
 def _role(value: str) -> Role:
@@ -134,12 +144,52 @@ def add_brand(body: BrandIn, admin: User = Depends(require_admin),
         ga4_property_id_enc=encrypt_str(body.ga4_property_id) if body.ga4_property_id else "",
         gsc_site_url=body.gsc_site_url,
         organic_only=body.organic_only,
+        brand_terms=body.brand_terms.strip(),
         use_demo_data=body.use_demo_data,
         credential_id=None if body.use_demo_data else body.credential_id,
         owner_user_id=admin.id,
     )
     db.add(client); db.commit(); db.refresh(client)
     return {"id": client.id, "display_name": client.display_name}
+
+
+@router.patch("/clients/{client_id}")
+def update_brand(client_id: str, body: BrandPatch, _: User = Depends(require_admin),
+                 db: DbSession = Depends(get_db)):
+    c = db.get(Client, client_id)
+    if not c:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "brand not found")
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(c, field, value.strip() if isinstance(value, str) else value)
+    db.commit(); db.refresh(c)
+    return {"id": c.id, "display_name": c.display_name, "brand_terms": c.brand_terms or ""}
+
+
+@router.get("/clients/{client_id}/brand-suggestions")
+def brand_suggestions(client_id: str, days: int = 30, _: User = Depends(require_admin),
+                      db: DbSession = Depends(get_db)):
+    """
+    Mine Search Console for likely brand variants so an admin doesn't have to
+    guess them. Navigational queries have a distinctive signature — people
+    searching your name click through at rates ordinary queries never reach.
+    """
+    from ..analysis_bridge import connectors, configure_credential
+    from ..services.credentials import resolve_credential
+
+    c = db.get(Client, client_id)
+    if not c:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "brand not found")
+    if not c.gsc_site_url:
+        return {"suggestions": [], "current": c.brand_terms or "", "reason": "No GSC site URL set."}
+    try:
+        kind, blob = resolve_credential(c)
+        sa = configure_credential(kind, blob)
+        return {
+            "current": c.brand_terms or "",
+            "suggestions": connectors.suggest_brand_terms(c.gsc_site_url, sa, days=days),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"suggestions": [], "current": c.brand_terms or "", "reason": str(exc)}
 
 
 @router.delete("/clients/{client_id}", status_code=status.HTTP_204_NO_CONTENT)

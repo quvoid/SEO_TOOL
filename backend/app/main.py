@@ -43,11 +43,40 @@ app.include_router(onpage.router)
 app.include_router(admin.router)
 
 
+def _add_missing_columns() -> None:
+    """
+    Add columns that `create_all` can't: it only creates missing TABLES, never
+    alters existing ones, so a new field on an existing deployment would raise
+    "no such column" on every query.
+
+    Idempotent — inspects the live schema first and only issues ALTER for what's
+    actually absent. Remove once Alembic is in place (see README).
+    """
+    from sqlalchemy import inspect as sa_inspect, text
+
+    wanted = {"clients": {"brand_terms": "TEXT DEFAULT ''"}}
+    insp = sa_inspect(engine)
+    for table, cols in wanted.items():
+        if table not in insp.get_table_names():
+            continue  # create_all will build it with the column already present
+        existing = {c["name"] for c in insp.get_columns(table)}
+        for col, ddl in cols.items():
+            if col in existing:
+                continue
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+            print(f"[startup] migrated: {table}.{col} added")
+
+
 @app.on_event("startup")
 def _startup() -> None:
     # Create tables if they don't exist. Idempotent and safe to run every boot.
     # (Once the schema stabilises, switch to Alembic migrations — see README.)
     Base.metadata.create_all(bind=engine)
+    try:
+        _add_missing_columns()
+    except Exception as exc:  # noqa: BLE001 — never let a migration crash boot
+        print(f"[startup] column migration skipped: {exc}")
 
     # Optional one-time boot seeding for hosts without a shell (Render free tier).
     if _settings.seed_on_startup:

@@ -68,17 +68,20 @@ export const api = {
     range: { start: string; end: string; compareMode?: "auto" | "custom"; compareStart?: string; compareEnd?: string },
     onStatus?: (s: string) => void,
     onProgress?: (p: RunProgress | null) => void,
+    withAi = false,
   ): Promise<Results> {
     if (USE_MOCK) {
       const labels = [...MODULE_ORDER.map((m) => m.label), "Executive Summary"];
       for (let i = 0; i < labels.length; i++) {
         onStatus?.(`Running — ${labels[i]}…`);
         onProgress?.({ i, t: labels.length, label: labels[i] });
-        await delay(350);
+        await delay(withAi ? 350 : 120);
       }
       return MOCK_RESULTS;
     }
-    const body: Record<string, unknown> = { client_id: clientId, start_date: range.start, end_date: range.end };
+    const body: Record<string, unknown> = {
+      client_id: clientId, start_date: range.start, end_date: range.end, with_ai: withAi,
+    };
     if (range.compareMode === "custom" && range.compareStart && range.compareEnd) {
       body.compare_start = range.compareStart;
       body.compare_end = range.compareEnd;
@@ -112,6 +115,11 @@ export const api = {
   adminAddBrand: (body: Record<string, unknown>) =>
     req("/admin/clients", { method: "POST", body: JSON.stringify(body) }),
   adminDeleteBrand: (id: string) => req(`/admin/clients/${id}`, { method: "DELETE" }),
+  adminUpdateBrand: (id: string, patch: { brand_terms?: string; display_name?: string; gsc_site_url?: string; organic_only?: boolean }) =>
+    req(`/admin/clients/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  adminBrandSuggestions: (id: string) =>
+    req<{ current: string; suggestions: { term: string; clicks: number; queries: number; partial?: boolean }[]; reason?: string }>(
+      `/admin/clients/${id}/brand-suggestions`),
 
   async getReport(id: string): Promise<Results | null> {
     if (USE_MOCK) return MOCK_RESULTS;

@@ -2,10 +2,19 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && DATABASE_URL='sqlite:///./growth_analyst_dev.db' FRONTEND_ORIGIN='http://localhost:5175' .venv-linux/bin/uvicorn app.main:app --reload --port 8000"
+      ],
+      "port": 8000
+    },
+    {
       "name": "frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
-      "port": 5173
+      "runtimeArgs": ["run", "dev", "--prefix", "frontend", "--", "--port", "5175", "--strictPort"],
+      "port": 5175
     }
   ]
 }

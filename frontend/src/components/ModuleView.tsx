@@ -7,6 +7,7 @@
 import type { ModuleResult } from "../types";
 import { cleanTitle } from "../util";
 import { Markdown } from "./Markdown";
+import { DataTable as CopyableTable } from "./viz";
 
 const HIDDEN_KEYS = new Set(["title", "narrative", "key_points"]);
 
@@ -36,7 +37,7 @@ function deltaClass(key: string, v: unknown): string {
 function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
   const cols = Array.from(new Set(rows.flatMap((r) => Object.keys(r))));
   return (
-    <div className="table-scroll">
+    <CopyableTable>
       <table className="data num">
         <thead>
           <tr>{cols.map((c) => <th key={c}>{humanize(c)}</th>)}</tr>
@@ -54,7 +55,7 @@ function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
           ))}
         </tbody>
       </table>
-    </div>
+    </CopyableTable>
   );
 }
 

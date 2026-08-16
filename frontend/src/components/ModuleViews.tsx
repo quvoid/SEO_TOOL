@@ -7,7 +7,7 @@ import type { ModuleResult, Results } from "../types";
 import { cleanTitle } from "../util";
 import { Markdown } from "./Markdown";
 import { ModuleView } from "./ModuleView";
-import { Card, Delta, Donut, HBars, Progress, ScoreRing, SortTh, StatTiles, fmt, useSort } from "./viz";
+import { Card, DataTable, Delta, Donut, HBars, LineChart, Progress, ScoreRing, SortTh, StatTiles, fmt, useSort } from "./viz";
 import { Select } from "./Select";
 
 const pct = (v: unknown) => `${(Number(v) * 100 || 0).toFixed(1)}%`;
@@ -232,7 +232,7 @@ function Scroll({ mod }: { mod: ModuleResult }) {
       <Title mod={mod} fallback="Scroll Analysis" />
       {!clarityOk && <ClarityFallback what="scroll-depth data" />}
       <Card title="Pages by engagement" sub="Click a column to sort ascending / descending">
-        <div className="table-scroll"><table className="data num">
+        <DataTable><table className="data num">
           <thead><tr>
             <th>Page</th>
             <Th k="avg_scroll_percent">Scroll depth</Th>
@@ -260,7 +260,7 @@ function Scroll({ mod }: { mod: ModuleResult }) {
               );
             })}
           </tbody>
-        </table></div>
+        </table></DataTable>
       </Card>
       <Narrative mod={mod} />
     </div>
@@ -347,7 +347,7 @@ function Keywords({ mod }: { mod: ModuleResult }) {
       )}
       {opps.length > 0 && (
         <Card title="Top keyword opportunities" sub="Click a column to sort">
-          <div className="table-scroll"><table className="data num">
+          <DataTable><table className="data num">
             <thead><tr>
               <SortTh k="query" sort={sort}>Query</SortTh>
               <SortTh k="position" sort={sort}>Position</SortTh>
@@ -366,7 +366,7 @@ function Keywords({ mod }: { mod: ModuleResult }) {
                 </tr>
               ))}
             </tbody>
-          </table></div>
+          </table></DataTable>
         </Card>
       )}
       <Narrative mod={mod} />
@@ -387,7 +387,7 @@ function Cannibalization({ mod }: { mod: ModuleResult }) {
             <div><span className="cann-q">"{c.query}"</span> <span className="badge">{c.severity}</span></div>
             <div className="muted">{fmt(c.total_impressions)} impressions · winner has {fmt(c.winner_click_share)}% of clicks</div>
           </div>
-          <div className="table-scroll"><table className="data num">
+          <DataTable><table className="data num">
             <thead><tr><th>Competing page</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Position</th></tr></thead>
             <tbody>
               {arr(c.competing_pages).map((p: any, j: number) => (
@@ -398,7 +398,7 @@ function Cannibalization({ mod }: { mod: ModuleResult }) {
                 </tr>
               ))}
             </tbody>
-          </table></div>
+          </table></DataTable>
         </Card>
       ))}
       <Narrative mod={mod} />
@@ -531,20 +531,22 @@ function Indexation({ mod }: { mod: ModuleResult }) {
         </Card>
       </div>
       {sitemaps.length > 0 && (
-        <Card title="Sitemaps" sub={proxy ? "Submitted counts are reliable; Google no longer exposes per-sitemap indexed counts" : undefined}>
-          <div className="table-scroll"><table className="data num">
+        <Card title="Sitemaps" sub={proxy ? "Sitemap-index files (marked) re-count their children, so they're excluded from the submitted total" : undefined}>
+          <DataTable><table className="data num">
             <thead><tr><th>Sitemap</th><th>Submitted</th>{!proxy && <><th>Indexed</th><th>Rate</th></>}</tr></thead>
             <tbody>
               {sitemaps.map((s: any, i: number) => (
-                <tr key={i}>
-                  <td className="trunc" title={s.path}>{shortUrl(s.path)}</td>
-                  <td>{fmt(s.submitted)}</td>
+                <tr key={i} style={s.is_index ? { opacity: 0.55 } : undefined}>
+                  <td className="trunc" title={s.path}>
+                    {shortUrl(s.path)} {s.is_index && <span className="badge">index</span>}
+                  </td>
+                  <td>{fmt(s.submitted)}{s.is_index && <span className="muted"> (not counted)</span>}</td>
                   {!proxy && <><td>{fmt(s.indexed)}</td>
                     <td>{s.submitted ? Math.round((s.indexed / s.submitted) * 100) : 0}%</td></>}
                 </tr>
               ))}
             </tbody>
-          </table></div>
+          </table></DataTable>
         </Card>
       )}
       <Narrative mod={mod} />
@@ -636,7 +638,7 @@ function KeywordOpportunities({ mod }: { mod: ModuleResult }) {
             {filter === "regional" ? "No regional-language keywords in the striking-distance band." : "No striking-distance opportunities found."}
           </div>
         ) : (
-          <div className="table-scroll"><table className="data num">
+          <DataTable><table className="data num">
             <thead><tr>
               <SortTh k="query" sort={sort}>Query</SortTh>
               <SortTh k="position" sort={sort}>Position</SortTh>
@@ -655,7 +657,7 @@ function KeywordOpportunities({ mod }: { mod: ModuleResult }) {
                 </tr>
               ))}
             </tbody>
-          </table></div>
+          </table></DataTable>
         )}
       </Card>
       <Narrative mod={mod} />
@@ -684,7 +686,7 @@ function UpliftTracker({ mod }: { mod: ModuleResult }) {
 
       {serp.length > 0 && (
         <Card title="Live SERP check — middle keywords" sub="Real Google (India) positions via serper.dev · only pos 4–20 keywords worth uplifting are tracked">
-          <div className="table-scroll"><table className="data num">
+          <DataTable><table className="data num">
             <thead><tr><th>Query</th><th>GSC pos</th><th>Live pos</th><th>Δ</th><th style={{ textAlign: "left" }}>Ranking above you</th></tr></thead>
             <tbody>
               {serp.map((s: any, i: number) => (
@@ -699,13 +701,13 @@ function UpliftTracker({ mod }: { mod: ModuleResult }) {
                 </tr>
               ))}
             </tbody>
-          </table></div>
+          </table></DataTable>
         </Card>
       )}
 
       {ctrGap.length > 0 && (
         <Card title="CTR gap — clicks you already earned but don't get" sub="CTR below the expected curve for the position · fix = title/meta rewrite, no ranking work needed">
-          <div className="table-scroll"><table className="data num">
+          <DataTable><table className="data num">
             <thead><tr>
               <SortTh k="page" sort={sort}>Page</SortTh>
               <SortTh k="position" sort={sort}>Position</SortTh>
@@ -724,14 +726,14 @@ function UpliftTracker({ mod }: { mod: ModuleResult }) {
                 </tr>
               ))}
             </tbody>
-          </table></div>
+          </table></DataTable>
         </Card>
       )}
 
       <div className="two-col">
         {flat.length > 0 && (
           <Card title="Flatliners" sub="±5% traffic, high impressions — stagnant potential">
-            <div className="table-scroll"><table className="data num">
+            <DataTable><table className="data num">
               <thead><tr><th>Page</th><th>Sessions</th><th>Δ</th><th>Impressions</th></tr></thead>
               <tbody>
                 {flat.map((f: any, i: number) => (
@@ -743,7 +745,7 @@ function UpliftTracker({ mod }: { mod: ModuleResult }) {
                   </tr>
                 ))}
               </tbody>
-            </table></div>
+            </table></DataTable>
           </Card>
         )}
         {links.length > 0 && (
@@ -766,12 +768,513 @@ function UpliftTracker({ mod }: { mod: ModuleResult }) {
   );
 }
 
+/* ================= Explorer-backed modules ================= */
+
+/** Shown when a module has no data — says WHY, never fakes numbers. */
+function EmptyModule({ mod, fallback, why }: { mod: ModuleResult; fallback: string; why: string }) {
+  return (
+    <div>
+      <Title mod={mod} fallback={fallback} />
+      <Card>
+        <div className="empty" style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <Info size={15} style={{ marginTop: 1, flexShrink: 0 }} />
+          <span>{why}</span>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ---- Landing Page Acquisition ---- */
+function LandingPages({ mod }: { mod: ModuleResult }) {
+  const rows = arr(mod.landing_pages);
+  const { sorted, sort } = useSort(rows, "sessions");
+  if (!rows.length)
+    return <EmptyModule mod={mod} fallback="Landing Page Acquisition"
+      why="No landing-page data returned for this period." />;
+  const delta = n(mod.overall_delta_pct);
+  return (
+    <div>
+      <Title mod={mod} fallback="Landing Page Acquisition" />
+      <Card sub="Sessions credited to the page that STARTED the visit — not every page viewed in it.">
+        <StatTiles tiles={[
+          { k: "Entry sessions", v: fmt(mod.total_sessions) },
+          { k: "Prior period", v: fmt(mod.total_prev_sessions) },
+          { k: "Change", v: <Delta value={delta} />, cls: delta >= 0 ? "good" : "bad" },
+          { k: "Landing pages", v: fmt(rows.length) },
+        ]} />
+      </Card>
+      <div className="two-col">
+        {/* Gain/loss genuinely MEANS good/bad, so these wear status tokens
+            rather than categorical series hues. */}
+        <Card title="Biggest gains">
+          <HBars data={arr(mod.gainers).slice(0, 6).map((g: any) => ({
+            label: shortUrl(g.label), value: n(g.delta_abs), color: "var(--good)",
+          }))} />
+        </Card>
+        <Card title="Biggest losses">
+          <HBars data={arr(mod.losers).slice(0, 6).map((l: any) => ({
+            label: shortUrl(l.label), value: n(l.delta_abs), color: "var(--bad)",
+          }))} />
+        </Card>
+      </div>
+      <Card title="Top landing pages">
+        <DataTable name="landing-pages">
+          <table className="data num">
+            <thead><tr>
+              <th>Landing page</th>
+              <SortTh k="sessions" sort={sort}>Sessions</SortTh>
+              <SortTh k="delta_pct" sort={sort}>Change</SortTh>
+              <SortTh k="engagement_rate" sort={sort}>Engaged</SortTh>
+              <SortTh k="conversions" sort={sort}>Conv.</SortTh>
+            </tr></thead>
+            <tbody>
+              {sorted.slice(0, 25).map((r: any, i: number) => (
+                <tr key={i}>
+                  <td className="txt" title={r.landing_page}>{shortUrl(r.landing_page)}</td>
+                  <td>{fmt(r.sessions)}</td>
+                  <td><Delta value={n(r.delta_pct)} /></td>
+                  <td>{fmt(r.engagement_rate)}%</td>
+                  <td>{fmt(r.conversions)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </DataTable>
+      </Card>
+      <Narrative mod={mod} />
+    </div>
+  );
+}
+
+/* ---- Daily Trends ---- */
+function Trends({ mod }: { mod: ModuleResult }) {
+  const series = arr(mod.series);
+  if (series.length < 2)
+    return <EmptyModule mod={mod} fallback="Daily Trends"
+      why="Not enough daily data to plot a trend for this period." />;
+  const anomalies = arr(mod.anomalies);
+  return (
+    <div>
+      <Title mod={mod} fallback="Daily Trends" />
+      <Card sub="The only module with a date axis — shows WHEN traffic moved, not just that it did.">
+        <StatTiles tiles={[
+          { k: "Avg sessions/day", v: fmt(mod.avg_sessions) },
+          { k: "Peak", v: String(mod.peak_date ?? "—") },
+          { k: "Trough", v: String(mod.trough_date ?? "—") },
+          { k: "Anomalies", v: fmt(anomalies.length), cls: anomalies.length ? "bad" : "good" },
+        ]} />
+      </Card>
+      {/* Sessions and clicks share a unit (visits) and a comparable range, so
+          they belong on one scale. Impressions and position do not — they get
+          their own charts rather than a second y-axis. */}
+      <Card title="Organic sessions vs Search clicks" sub="Both are visits, so both share one scale.">
+        <LineChart
+          points={series}
+          xLabel={(p) => String(p.date ?? "")}
+          series={[
+            { key: "sessions", label: "GA4 sessions", color: "var(--viz-1)" },
+            { key: "clicks", label: "GSC clicks", color: "var(--viz-2)" },
+          ]}
+        />
+      </Card>
+      <div className="viz-pair">
+        <Card title="Impressions">
+          <LineChart
+            points={series} vbWidth={440}
+            xLabel={(p) => String(p.date ?? "")}
+            series={[{ key: "impressions", label: "Impressions", color: "var(--viz-5)" }]}
+          />
+        </Card>
+        <Card title="Average position" sub="Axis inverted — rank 1 sits at the top.">
+          <LineChart
+            points={series} invertY vbWidth={440}
+            xLabel={(p) => String(p.date ?? "")}
+            yFormat={(v) => Number(v).toFixed(1)}
+            series={[{ key: "position", label: "Avg position", color: "var(--viz-3)" }]}
+          />
+        </Card>
+      </div>
+      {anomalies.length > 0 && (
+        <Card title="Statistical anomalies" sub="Days more than 2 standard deviations below the period average.">
+          <div className="chip-row">
+            {anomalies.map((a: any, i: number) => (
+              <span className="chip bad" key={i}>
+                <b>{a.date}</b> {fmt(a.sessions)} sessions
+                <span className="neg">{n(a.vs_avg_pct) > 0 ? "+" : ""}{fmt(a.vs_avg_pct)}%</span>
+              </span>
+            ))}
+          </div>
+        </Card>
+      )}
+      {/* The table is the relief channel: in light mode two series sit below 3:1
+          against white, so every plotted value must also be readable as text. */}
+      <Card title="Daily figures" sub="Every plotted value, copyable — the chart never gates a number.">
+        <DataTable name="daily-trends">
+          <table className="data num">
+            <thead><tr>
+              <th>Date</th><th>Sessions</th><th>Clicks</th><th>Impressions</th><th>Position</th>
+            </tr></thead>
+            <tbody>
+              {series.map((s: any, i: number) => (
+                <tr key={i}>
+                  <td className="txt">{s.date}</td>
+                  <td>{fmt(s.sessions)}</td>
+                  <td>{fmt(s.clicks)}</td>
+                  <td>{fmt(s.impressions)}</td>
+                  <td>{fmt(s.position)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </DataTable>
+      </Card>
+      <Narrative mod={mod} />
+    </div>
+  );
+}
+
+/* ---- Brand vs Non-Brand ---- */
+function BrandSplit({ mod }: { mod: ModuleResult }) {
+  const branded = arr(mod.branded_queries), nonbrand = arr(mod.nonbrand_queries);
+  if (!branded.length && !nonbrand.length)
+    return <EmptyModule mod={mod} fallback="Brand vs Non-Brand"
+      why="No Search Console query data returned for this period." />;
+  const share = n(mod.brand_share_pct);
+  const QTable = ({ rows, name }: { rows: any[]; name: string }) => (
+    <DataTable name={name}>
+      <table className="data num">
+        <thead><tr><th>Query</th><th>Clicks</th><th>Impr.</th><th>Pos.</th></tr></thead>
+        <tbody>
+          {rows.slice(0, 12).map((r: any, i: number) => (
+            <tr key={i}>
+              <td className="txt" title={r.query}>{r.query}</td>
+              <td>{fmt(r.clicks)}</td>
+              <td>{fmt(r.impressions)}</td>
+              <td>{fmt(r.position)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </DataTable>
+  );
+  return (
+    <div>
+      <Title mod={mod} fallback="Brand vs Non-Brand" />
+      <Card sub="Filtered inside Search Console, so each side gets its own top queries — brand terms can't crowd out the non-brand long tail.">
+        {/* Two identities, so two categorical slots — separated by a 2px
+            surface gap rather than a stroke around each segment. */}
+        <div className="split-bar">
+          <div className="split-seg" style={{ width: `${share}%`, background: "var(--viz-1)" }}>
+            {share >= 14 ? `Brand ${share.toFixed(0)}%` : ""}
+          </div>
+          <div className="split-seg" style={{ width: `${100 - share}%`, background: "var(--viz-2)" }}>
+            {100 - share >= 14 ? `Non-brand ${(100 - share).toFixed(0)}%` : ""}
+          </div>
+        </div>
+        <div className="lc-legend" style={{ marginTop: 10 }}>
+          <span className="lc-key"><i style={{ background: "var(--viz-1)", height: 9, width: 9, borderRadius: 2 }} /> Branded</span>
+          <span className="lc-key"><i style={{ background: "var(--viz-2)", height: 9, width: 9, borderRadius: 2 }} /> Non-branded</span>
+        </div>
+        <div className="split-legend">
+          <span>Brand <b>{fmt(mod.brand_clicks)}</b> clicks · pos {fmt(mod.brand_position)} · CTR {fmt(mod.brand_ctr_pct)}%</span>
+          <span>Non-brand <b>{fmt(mod.nonbrand_clicks)}</b> clicks · pos {fmt(mod.nonbrand_position)} · CTR {fmt(mod.nonbrand_ctr_pct)}%</span>
+        </div>
+      </Card>
+      <div className="two-col">
+        <Card title="Top branded queries">
+          {branded.length ? <QTable rows={branded} name="branded" /> : <div className="muted">None matched.</div>}
+        </Card>
+        <Card title="Top non-brand queries" sub="The actionable list.">
+          {nonbrand.length ? <QTable rows={nonbrand} name="non-brand" /> : <div className="muted">None matched.</div>}
+        </Card>
+      </div>
+      {mod.brand_pattern ? (
+        <Card title="Brand pattern used">
+          <code className="muted" style={{ fontSize: 11.5, wordBreak: "break-all" }}>
+            {String(mod.brand_pattern).slice(0, 400)}
+          </code>
+        </Card>
+      ) : null}
+      <Narrative mod={mod} />
+    </div>
+  );
+}
+
+/* ---- Search Intent ---- */
+function SearchIntent({ mod }: { mod: ModuleResult }) {
+  const summary = arr(mod.intent_summary);
+  const [pick, setPick] = useState<string>("");
+  if (!summary.length)
+    return <EmptyModule mod={mod} fallback="Search Intent"
+      why="No intent buckets returned for this period." />;
+  const queries = arr(mod.intent_queries);
+  const active = pick || String(summary[0]?.intent ?? "");
+  const shown = queries.filter((q: any) => q.intent === active);
+  return (
+    <div>
+      <Title mod={mod} fallback="Search Intent" />
+      <Card sub="Non-brand demand bucketed by intent, each filtered server-side so every bucket has its own top queries.">
+        <HBars data={summary.map((s: any) => ({
+          label: s.intent, value: n(s.clicks),
+          sub: `pos ${fmt(s.position)} · CTR ${fmt(s.ctr_pct)}%`,
+        }))} />
+      </Card>
+      <Card title="Queries by intent">
+        <div style={{ marginBottom: 10, maxWidth: 240 }}>
+          <Select
+            value={active}
+            onChange={setPick}
+            options={summary.map((s: any) => ({ value: s.intent, label: `${s.intent} (${fmt(s.clicks)} clicks)` }))}
+          />
+        </div>
+        <DataTable name={`intent-${active}`}>
+          <table className="data num">
+            <thead><tr><th>Query</th><th>Clicks</th><th>Impr.</th><th>Pos.</th></tr></thead>
+            <tbody>
+              {shown.slice(0, 15).map((q: any, i: number) => (
+                <tr key={i}>
+                  <td className="txt">{q.query}</td>
+                  <td>{fmt(q.clicks)}</td>
+                  <td>{fmt(q.impressions)}</td>
+                  <td>{fmt(q.position)}</td>
+                </tr>
+              ))}
+              {!shown.length && <tr><td colSpan={4} className="muted">No queries in this bucket.</td></tr>}
+            </tbody>
+          </table>
+        </DataTable>
+      </Card>
+      <Narrative mod={mod} />
+    </div>
+  );
+}
+
+/* ---- Audience & Segments ---- */
+function Segments({ mod }: { mod: ModuleResult }) {
+  const blocks: { key: string; title: string }[] = [
+    { key: "device_rows", title: "Device" },
+    { key: "country_rows", title: "Country" },
+    { key: "source_rows", title: "Source / medium" },
+  ];
+  const present = blocks.filter((b) => arr(mod[b.key]).length);
+  const gscDev = arr(mod.gsc_device_rows);
+  if (!present.length && !gscDev.length)
+    return <EmptyModule mod={mod} fallback="Audience & Segments"
+      why="No segment data returned — GA4 breakdowns are unavailable for this client." />;
+  return (
+    <div>
+      <Title mod={mod} fallback="Audience & Segments" />
+      {gscDev.length > 0 && (
+        <Card title="Search position by device"
+              sub="Under mobile-first indexing the mobile position is the real one.">
+          <DataTable name="gsc-device">
+            <table className="data num">
+              <thead><tr><th>Device</th><th>Clicks</th><th>Position</th><th>Prev</th><th>Change</th></tr></thead>
+              <tbody>
+                {gscDev.map((r: any, i: number) => (
+                  <tr key={i}>
+                    <td className="txt">{r.device}</td>
+                    <td>{fmt(r.clicks)}</td>
+                    <td>{fmt(r.position)}</td>
+                    <td>{fmt(r.prev_position)}</td>
+                    {/* Position is rank: LOWER is better, so invert the tone. */}
+                    <td className={n(r.position_change) < 0 ? "pos" : n(r.position_change) > 0 ? "neg" : ""}>
+                      {n(r.position_change) > 0 ? "+" : ""}{fmt(r.position_change)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </DataTable>
+        </Card>
+      )}
+      {present.map((b) => {
+        const rows = arr(mod[b.key]);
+        return (
+          <Card key={b.key} title={b.title}>
+            <HBars data={rows.slice(0, 8).map((r: any) => ({
+              label: String(r.segment || "—"), value: n(r.sessions),
+              sub: `${n(r.delta_pct) > 0 ? "+" : ""}${fmt(r.delta_pct)}%`,
+            }))} />
+          </Card>
+        );
+      })}
+      <Narrative mod={mod} />
+    </div>
+  );
+}
+
+/* ---- Hourly Pulse ---- */
+function HourlyPulse({ mod }: { mod: ModuleResult }) {
+  const hours = arr(mod.hours);
+  if (hours.length < 2)
+    return <EmptyModule mod={mod} fallback="Hourly Pulse"
+      why="No hourly Search Console data returned. This needs the HOUR dimension, which covers the last 10 days only." />;
+  const d = n(mod.delta_pct);
+  return (
+    <div>
+      <Title mod={mod} fallback="Hourly Pulse" />
+      <Card sub="Search Console's hourly feed runs ahead of the usual 2-3 day reporting lag — the earliest signal something broke.">
+        <StatTiles tiles={[
+          { k: "Clicks last 24h", v: fmt(mod.clicks_last_24h) },
+          { k: "Prior 24h", v: fmt(mod.clicks_prev_24h) },
+          { k: "Change", v: <Delta value={d} />, cls: d >= 0 ? "good" : "bad" },
+          { k: "Hours tracked", v: fmt(hours.length) },
+        ]} />
+      </Card>
+      {/* Impressions run ~100x clicks here, so one shared scale would flatten
+          clicks onto the baseline. Two charts, not two axes. */}
+      <div className="viz-pair">
+        <Card title="Clicks by hour">
+          <LineChart
+            points={hours} height={190} vbWidth={440}
+            xLabel={(p) => String(p.hour ?? "").slice(5, 13).replace("T", " ") + "h"}
+            series={[{ key: "clicks", label: "Clicks", color: "var(--viz-1)" }]}
+          />
+        </Card>
+        <Card title="Impressions by hour">
+          <LineChart
+            points={hours} height={190} vbWidth={440}
+            xLabel={(p) => String(p.hour ?? "").slice(5, 13).replace("T", " ") + "h"}
+            series={[{ key: "impressions", label: "Impressions", color: "var(--viz-5)" }]}
+          />
+        </Card>
+      </div>
+      <Card title="Hourly figures" sub="Pacific time, as Search Console returns it.">
+        <DataTable name="hourly-pulse">
+          <table className="data num">
+            <thead><tr><th>Hour</th><th>Clicks</th><th>Impressions</th></tr></thead>
+            <tbody>
+              {[...hours].reverse().slice(0, 48).map((h: any, i: number) => (
+                <tr key={i}>
+                  <td className="txt">{String(h.hour ?? "").replace("T", " ").slice(0, 16)}</td>
+                  <td>{fmt(h.clicks)}</td>
+                  <td>{fmt(h.impressions)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </DataTable>
+      </Card>
+      <Narrative mod={mod} />
+    </div>
+  );
+}
+
+/* ---- Google Discover ---- */
+function Discover({ mod }: { mod: ModuleResult }) {
+  const pages = arr(mod.pages);
+  if (!pages.length)
+    return <EmptyModule mod={mod} fallback="Google Discover"
+      why="No Discover impressions in this period — this site may not be Discover-eligible." />;
+  return (
+    <div>
+      <Title mod={mod} fallback="Google Discover" />
+      <Card sub="Discover traffic is invisible to a web-search-only pipeline — it has no query dimension at all.">
+        <StatTiles tiles={[
+          { k: "Discover clicks", v: fmt(mod.discover_clicks) },
+          { k: "Impressions", v: fmt(mod.discover_impressions) },
+          { k: "CTR", v: `${fmt(mod.discover_ctr_pct)}%` },
+          { k: "Pages surfaced", v: fmt(pages.length) },
+        ]} />
+      </Card>
+      <Card title="Pages in Discover">
+        <DataTable name="discover">
+          <table className="data num">
+            <thead><tr><th>Page</th><th>Clicks</th><th>Impr.</th><th>CTR</th></tr></thead>
+            <tbody>
+              {pages.slice(0, 20).map((p: any, i: number) => (
+                <tr key={i}>
+                  <td className="txt" title={p.page}>{shortUrl(p.page)}</td>
+                  <td>{fmt(p.clicks)}</td>
+                  <td>{fmt(p.impressions)}</td>
+                  <td>{fmt(p.ctr_pct)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </DataTable>
+      </Card>
+      <Narrative mod={mod} />
+    </div>
+  );
+}
+
+/* ---- Index Inspection ---- */
+function IndexInspection({ mod }: { mod: ModuleResult }) {
+  const total = n(mod.urls_inspected);
+  if (!total)
+    return <EmptyModule mod={mod} fallback="Index Inspection"
+      why="No URLs were inspected for this run." />;
+  const problems = arr(mod.problem_urls);
+  const mismatches = n(mod.canonical_mismatches);
+  return (
+    <div>
+      <Title mod={mod} fallback="Index Inspection" />
+      <Card sub="Asked of Google directly per URL, rather than inferred from sitemap counts and impression proxies.">
+        <StatTiles tiles={[
+          { k: "URLs inspected", v: fmt(total) },
+          { k: "Indexed", v: fmt(mod.indexed), cls: "good" },
+          { k: "Not indexed", v: fmt(mod.not_indexed), cls: n(mod.not_indexed) ? "bad" : "" },
+          { k: "Canonical conflicts", v: fmt(mismatches), cls: mismatches ? "bad" : "good" },
+        ]} />
+        <div style={{ marginTop: 12 }}>
+          <Progress pct={n(mod.indexation_rate)} />
+          <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+            {fmt(mod.indexation_rate)}% of inspected URLs are indexed.
+          </div>
+        </div>
+      </Card>
+      {arr(mod.coverage_states).length > 0 && (
+        <Card title="Coverage states">
+          <div className="chip-row">
+            {arr(mod.coverage_states).map((c: any, i: number) => (
+              <span className={`chip ${/not indexed|error|excluded/i.test(String(c.state)) ? "bad" : ""}`} key={i}>
+                {c.state} <b>{fmt(c.urls)}</b>
+              </span>
+            ))}
+          </div>
+        </Card>
+      )}
+      {problems.length > 0 && (
+        <Card title="URLs needing attention"
+              sub="A canonical conflict means Google chose a different canonical than the page declared.">
+          <DataTable name="index-problems">
+            <table className="data num">
+              <thead><tr>
+                <th>URL</th><th>Coverage state</th><th>Canonical conflict</th><th>Last crawl</th>
+              </tr></thead>
+              <tbody>
+                {problems.map((p: any, i: number) => (
+                  <tr key={i}>
+                    <td className="txt" title={p.url}>{shortUrl(p.url)}</td>
+                    <td className="txt">{p.coverage_state || "—"}</td>
+                    <td className={p.canonical_mismatch ? "neg" : ""}>
+                      {p.canonical_mismatch ? shortUrl(p.google_canonical) || "yes" : "—"}
+                    </td>
+                    <td className="txt">{p.last_crawl || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </DataTable>
+        </Card>
+      )}
+      <Narrative mod={mod} />
+    </div>
+  );
+}
+
 const VIEWS: Record<string, (p: { mod: ModuleResult; results: Results }) => JSX.Element> = {
   organic: Organic, funnel: Funnel, heatmap: Heatmap, scroll: Scroll,
   keywords: Keywords, cannibalization: Cannibalization, ux_audit: UxAudit,
   hidden_insights: Hidden, indexation: Indexation,
   path_exploration: PathExploration, keyword_opportunities: KeywordOpportunities,
   uplift: UpliftTracker,
+  landing_pages: LandingPages, trends: Trends, brand_split: BrandSplit,
+  intent: SearchIntent, segments: Segments, hourly: HourlyPulse,
+  discover: Discover, index_inspection: IndexInspection,
 };
 
 export function ModuleRouter({ tab, results, label }: { tab: string; results: Results; label: string }) {

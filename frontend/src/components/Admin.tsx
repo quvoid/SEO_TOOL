@@ -1,12 +1,103 @@
 import { useEffect, useState } from "react";
-import { UserPlus, KeyRound, Building2, Trash2 } from "lucide-react";
+import { UserPlus, KeyRound, Building2, Trash2, Tag, Wand2 } from "lucide-react";
 import { api } from "../api";
+
+/**
+ * Per-client branded-query terms.
+ *
+ * Left empty, brand terms are derived from the domain — which works for
+ * bodycraft.co.in ("body craft") but cannot know hdfcbank.com is also searched
+ * as plain "hdfc". Suggestions are mined from Search Console (navigational
+ * queries have unmistakably high CTR at strong positions) but are never applied
+ * automatically: a false positive silently reclassifies real traffic.
+ */
+function BrandTermsEditor({ client, onSaved }: { client: any; onSaved: () => void }) {
+  const [terms, setTerms] = useState<string>(client.brand_terms || "");
+  const [sugg, setSugg] = useState<{ term: string; clicks: number; queries: number; partial?: boolean }[]>([]);
+  const [reason, setReason] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const fetchSuggestions = async () => {
+    setBusy(true);
+    try {
+      const r = await api.adminBrandSuggestions(client.id);
+      setSugg(r.suggestions || []);
+      setReason(r.reason || (r.suggestions?.length ? "" : "No additional brand-like queries found."));
+    } catch (e) { setReason((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const add = (t: string) => {
+    const list = terms.split(",").map((s) => s.trim()).filter(Boolean);
+    if (!list.some((x) => x.toLowerCase() === t.toLowerCase())) list.push(t);
+    setTerms(list.join(", "));
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try { await api.adminUpdateBrand(client.id, { brand_terms: terms }); onSaved(); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="card" style={{ marginTop: 12, background: "var(--bg-2)" }}>
+      <h2 style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 7 }}>
+        <Tag size={14} /> Branded queries — {client.display_name}
+      </h2>
+      <div className="muted" style={{ marginBottom: 10 }}>
+        Comma-separated variants, including misspellings and other scripts. Leave blank to
+        derive them from the domain.
+      </div>
+      <input className="onpage-input" style={{ width: "100%" }}
+             placeholder="e.g. hdfc, hdfc bank, hdfcbank"
+             value={terms} onChange={(e) => setTerms(e.target.value)} />
+      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+        <button className="btn sm" onClick={save} disabled={saving}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+        <button className="btn ghost sm" onClick={fetchSuggestions} disabled={busy}>
+          <Wand2 size={13} /> {busy ? "Scanning…" : "Suggest from Search Console"}
+        </button>
+      </div>
+      {reason && <div className="muted" style={{ marginTop: 9, fontSize: 12 }}>{reason}</div>}
+      {sugg.length > 0 && (
+        <div style={{ marginTop: 11 }}>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 7 }}>
+            Terms related to your domain that the automatic pattern misses. The number
+            is the traffic each would reclassify as brand — click to add:
+          </div>
+          <div className="chip-row">
+            {sugg.map((s) => (
+              <button className={`chip ${s.partial ? "warn" : ""}`} key={s.term} onClick={() => add(s.term)}
+                      title={s.partial
+                        ? `Fragment of your domain — check it isn't an ordinary word. Would move ${s.queries} queries / ${s.clicks} clicks into brand.`
+                        : `Would move ${s.queries} queries / ${s.clicks} clicks into brand.`}
+                      style={{ cursor: "pointer" }}>
+                <b>{s.term}</b> {s.clicks.toLocaleString()} clicks
+              </button>
+            ))}
+          </div>
+          {sugg.some((s) => s.partial) && (
+            <div className="muted" style={{ fontSize: 11.5, marginTop: 8 }}>
+              Amber chips are fragments of your domain name. They catch shortened brand
+              searches (<code>hdfc</code> for hdfcbank), but a fragment that is also a
+              common word (<code>body</code> for bodycraft) would wrongly pull generic
+              traffic into brand. Check before adding.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Admin({ onClientsChanged }: { onClientsChanged?: () => void } = {}) {
   const [users, setUsers] = useState<any[]>([]);
   const [creds, setCreds] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
   const [msg, setMsg] = useState<string>("");
+  const [editing, setEditing] = useState<string | null>(null);
 
   const load = () => {
     api.adminUsers().then(setUsers).catch(() => {});
@@ -109,13 +200,19 @@ export function Admin({ onClientsChanged }: { onClientsChanged?: () => void } = 
         </div>
         <button className="btn sm" style={{ marginTop: 10 }} onClick={addBrand} disabled={!b.display_name || !b.credential_id}>Add brand</button>
         <div className="table-scroll"><table className="data" style={{ marginTop: 14 }}>
-          <thead><tr><th>Brand</th><th>GA4</th><th>Account</th><th></th></tr></thead>
+          <thead><tr><th>Brand</th><th>GA4</th><th>Account</th><th>Brand terms</th><th></th></tr></thead>
           <tbody>
             {clients.map((x) => (
               <tr key={x.id}>
                 <td>{x.display_name}</td>
                 <td>{x.ga4_property_id_masked || "—"}</td>
                 <td>{x.credential_label || "—"}</td>
+                <td>
+                  <button className="btn ghost sm" title="Edit branded-query terms"
+                    onClick={() => setEditing(editing === x.id ? null : x.id)}>
+                    <Tag size={13} /> {x.brand_terms ? "custom" : "auto"}
+                  </button>
+                </td>
                 <td style={{ textAlign: "right" }}>
                   <button className="btn ghost" title="Delete brand"
                     onClick={() => confirm(`Delete ${x.display_name}?`) && api.adminDeleteBrand(x.id).then(() => { load(); onClientsChanged?.(); })}>
@@ -126,6 +223,8 @@ export function Admin({ onClientsChanged }: { onClientsChanged?: () => void } = 
             ))}
           </tbody>
         </table></div>
+        {editing && <BrandTermsEditor client={clients.find((c) => c.id === editing)!}
+                                      onSaved={() => { setEditing(null); load(); flash("Brand terms saved"); }} />}
       </div>
     </div>
   );
