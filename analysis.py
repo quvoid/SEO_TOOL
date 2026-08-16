@@ -1576,15 +1576,20 @@ def module_indexation_health(indexation_data: dict, api_key: str | None, model: 
     discovered_not_indexed = indexation_data.get("discovered_not_indexed", 0)
     sitemaps = indexation_data.get("sitemaps", [])
 
-    # Real indexed signal: distinct pages with any Search impressions.
-    pages_in_search = len([p for p in (gsc_rows or []) if (p.get("impressions", 0) or 0) > 0])
+    # Real indexed signal: distinct pages receiving Search impressions. Prefer the
+    # connector's uncapped, paginated count; fall back to the (capped) page rows.
+    pages_in_search = indexation_data.get("pages_in_search")
+    if pages_in_search is None:
+        pages_in_search = len([p for p in (gsc_rows or []) if (p.get("impressions", 0) or 0) > 0])
 
-    sitemap_indexed_available = sitemap_indexed > 0
+    # Google's Sitemaps API no longer returns indexed counts, so the Search
+    # proxy is the source of truth.
+    sitemap_indexed_available = bool(indexation_data.get("sitemap_indexed_available", sitemap_indexed > 0)) \
+        and sitemap_indexed > pages_in_search
     if sitemap_indexed_available:
         indexed = sitemap_indexed
         indexed_source = "sitemap"
     else:
-        # Sitemaps API didn't report indexed counts — use the Search proxy.
         indexed = pages_in_search
         indexed_source = "search_impressions"
     rate = round(indexed / submitted * 100, 1) if submitted else 0.0
@@ -1629,4 +1634,409 @@ def module_indexation_health(indexation_data: dict, api_key: str | None, model: 
         "discovered_not_indexed": discovered_not_indexed,
         "sitemaps": sitemaps,
         "narrative": narrative,
+    }
+
+
+# ===========================================================================
+# Modules 10-17 — built on the Explorer connectors (landing pages, brand split,
+# intent, segments, trends, hourly, Discover, index inspection).
+#
+# These answer questions the original nine modules structurally could not: they
+# use the entry page rather than every page viewed, filter GSC server-side, and
+# request the `date`/`HOUR` dimensions nothing else asks for.
+# ===========================================================================
+def _delta_rows(rows: list[dict], key: str, metric: str = "sessions", n: int = 6):
+    """Split rows into gainers/losers by period-over-period change in `metric`."""
+    scored = []
+    for r in rows:
+        cur, prev = r.get(metric, 0) or 0, r.get(f"prev_{metric}", 0) or 0
+        scored.append({**r, "label": r.get(key, ""), "delta_pct": _pct(cur, prev),
+                       "delta_abs": cur - prev})
+    gainers = sorted([s for s in scored if s["delta_abs"] > 0],
+                     key=lambda s: s["delta_abs"], reverse=True)[:n]
+    losers = sorted([s for s in scored if s["delta_abs"] < 0],
+                    key=lambda s: s["delta_abs"])[:n]
+    return gainers, losers
+
+
+def module_landing_pages(lp: dict, api_key, model) -> dict:
+    """
+    Organic acquisition by ENTRY page.
+
+    Module 1 groups by pagePath — every page viewed in a session — so a visit
+    landing on /guide that then hits /pricing credits both, inflating hub and
+    nav pages. This counts only the page that actually earned the entrance.
+    """
+    rows = (lp or {}).get("rows", []) or []
+    if not rows:
+        return {"title": "Landing Page Acquisition", "rows": [], "narrative": "",
+                "key_points": ["No landing-page data returned for this period."]}
+
+    total = sum(r.get("sessions", 0) for r in rows)
+    prev_total = sum(r.get("prev_sessions", 0) for r in rows)
+    gainers, losers = _delta_rows(rows, "landing_page", "sessions")
+
+    top = []
+    for r in rows[:25]:
+        sess = r.get("sessions", 0) or 0
+        top.append({
+            "landing_page": r.get("landing_page", ""),
+            "sessions": sess,
+            "prev_sessions": r.get("prev_sessions", 0),
+            "delta_pct": _pct(sess, r.get("prev_sessions", 0)),
+            "engagement_rate": round((r.get("engagementRate", 0) or 0) * 100, 1),
+            "conversions": r.get("conversions", 0),
+            "revenue": r.get("totalRevenue", 0),
+        })
+
+    loser_lines = "\n".join(
+        f"- {l['label']}: {l['delta_abs']:+,} sessions ({l['delta_pct']:+.0f}%)"
+        for l in losers[:5]) or "- none"
+    prompt = (
+        f"Organic ENTRY-page sessions: {prev_total:,} -> {total:,} "
+        f"({_pct(total, prev_total):+.0f}%).\n\n"
+        f"Biggest entry-page declines:\n{loser_lines}\n\n"
+        "These are landing pages (where organic sessions START), not all pageviews. "
+        "Identify which declines are demand loss vs ranking loss vs a page that "
+        "stopped being the entry point, and give one specific fix each."
+    )
+    return {
+        "title": "Landing Page Acquisition",
+        "total_sessions": total,
+        "total_prev_sessions": prev_total,
+        "overall_delta_pct": _pct(total, prev_total),
+        "landing_pages": top,
+        "gainers": gainers,
+        "losers": losers,
+        "narrative": reasoning(prompt, api_key, model),
+        "key_points": [
+            f"{len(rows)} landing pages earned organic entrances.",
+            f"Top entry page: {rows[0].get('landing_page','')} "
+            f"({rows[0].get('sessions',0):,} sessions).",
+        ],
+    }
+
+
+def module_brand_split(bs: dict, api_key, model) -> dict:
+    """
+    Branded vs non-branded, filtered server-side so each side gets its own top N.
+
+    Brand movement is a marketing/PR signal; non-brand movement is the SEO
+    signal. Blending them hides both.
+    """
+    branded = (bs or {}).get("branded", []) or []
+    non_branded = (bs or {}).get("non_branded", []) or []
+    tb = (bs or {}).get("totals", {}).get("branded", {}) or {}
+    tn = (bs or {}).get("totals", {}).get("non_branded", {}) or {}
+    if not branded and not non_branded:
+        return {"title": "Brand vs Non-Brand", "narrative": "",
+                "key_points": ["No Search Console query data returned."]}
+
+    b_clicks, n_clicks = tb.get("clicks", 0), tn.get("clicks", 0)
+    total = b_clicks + n_clicks
+    brand_share = round(b_clicks / total * 100, 1) if total else 0.0
+
+    prompt = (
+        f"Branded queries: {b_clicks:,.0f} clicks, avg position {tb.get('position',0):.1f}, "
+        f"CTR {tb.get('ctr',0)*100:.1f}%.\n"
+        f"Non-branded queries: {n_clicks:,.0f} clicks, avg position {tn.get('position',0):.1f}, "
+        f"CTR {tn.get('ctr',0)*100:.1f}%.\n"
+        f"Brand share of organic clicks: {brand_share:.1f}%.\n\n"
+        "Assess whether this site is over-dependent on brand demand, and what the "
+        "non-brand numbers say about content and ranking health. Be specific."
+    )
+    return {
+        "title": "Brand vs Non-Brand",
+        "brand_clicks": round(b_clicks),
+        "nonbrand_clicks": round(n_clicks),
+        "brand_share_pct": brand_share,
+        "brand_position": tb.get("position", 0),
+        "nonbrand_position": tn.get("position", 0),
+        "brand_ctr_pct": round(tb.get("ctr", 0) * 100, 2),
+        "nonbrand_ctr_pct": round(tn.get("ctr", 0) * 100, 2),
+        "branded_queries": branded[:25],
+        "nonbrand_queries": non_branded[:25],
+        "brand_pattern": (bs or {}).get("brand_pattern", ""),
+        "narrative": reasoning(prompt, api_key, model),
+        "key_points": [
+            f"Brand drives {brand_share:.0f}% of organic clicks.",
+            f"Non-brand sits at position {tn.get('position',0):.1f} vs brand "
+            f"{tb.get('position',0):.1f}.",
+        ],
+    }
+
+
+def module_search_intent(ib: dict, api_key, model) -> dict:
+    """Non-brand demand split by intent, each bucket filtered server-side."""
+    buckets = (ib or {}).get("buckets", {}) or {}
+    if not buckets:
+        return {"title": "Search Intent", "narrative": "",
+                "key_points": ["No intent data returned."]}
+
+    summary, rows = [], []
+    for name, b in buckets.items():
+        t = b.get("totals", {}) or {}
+        summary.append({
+            "intent": name.title(),
+            "clicks": round(t.get("clicks", 0)),
+            "impressions": round(t.get("impressions", 0)),
+            "ctr_pct": round(t.get("ctr", 0) * 100, 2),
+            "position": round(t.get("position", 0), 1),
+            "queries": t.get("queries", 0),
+        })
+        for q in (b.get("rows", []) or [])[:10]:
+            rows.append({"intent": name.title(), **q})
+    summary.sort(key=lambda s: s["clicks"], reverse=True)
+
+    lines = "\n".join(
+        f"- {s['intent']}: {s['clicks']:,} clicks, CTR {s['ctr_pct']:.1f}%, "
+        f"avg position {s['position']:.1f}" for s in summary)
+    prompt = (
+        f"Non-brand organic demand by search intent:\n{lines}\n\n"
+        "Which intent is under-served relative to its position and impressions? "
+        "Transactional queries ranking well but converting little indicates a "
+        "landing-page problem, not a ranking one. Give 3 prioritised actions."
+    )
+    return {
+        "title": "Search Intent",
+        "intent_summary": summary,
+        "intent_queries": rows,
+        "narrative": reasoning(prompt, api_key, model),
+        "key_points": [f"{s['intent']}: {s['clicks']:,} clicks at position "
+                       f"{s['position']:.1f}." for s in summary[:3]],
+    }
+
+
+def module_segments(seg: dict, api_key, model) -> dict:
+    """Organic split by device, country and source/medium — GA4 and GSC."""
+    out: dict = {"title": "Audience & Segments"}
+    parts = []
+    for key, label in (("device", "Device"), ("country", "Country"),
+                       ("source", "Source / medium")):
+        block = (seg or {}).get(key) or {}
+        rows = block.get("rows", []) or []
+        if not rows:
+            continue
+        clean = []
+        for r in rows[:12]:
+            sess = r.get("sessions", 0) or 0
+            clean.append({
+                "segment": r.get("label", ""),
+                "sessions": sess,
+                "prev_sessions": r.get("prev_sessions", 0),
+                "delta_pct": _pct(sess, r.get("prev_sessions", 0)),
+                "conversions": r.get("conversions", 0),
+            })
+        out[f"{key}_rows"] = clean
+        top = clean[0] if clean else {}
+        parts.append(f"{label}: {top.get('segment','')} leads with "
+                     f"{top.get('sessions',0):,} sessions ({top.get('delta_pct',0):+.0f}%)")
+
+    gsc_dev = ((seg or {}).get("gsc_device") or {}).get("rows", []) or []
+    if gsc_dev:
+        out["gsc_device_rows"] = [{
+            "device": r.get("label", ""), "clicks": round(r.get("clicks", 0)),
+            "position": round(r.get("position", 0), 1),
+            "prev_position": round(r.get("prev_position", 0), 1),
+            "position_change": round(r.get("position", 0) - r.get("prev_position", 0), 2),
+        } for r in gsc_dev[:6]]
+
+    if not parts and not gsc_dev:
+        out["key_points"] = ["No segment data returned."]
+        out["narrative"] = ""
+        return out
+
+    prompt = (
+        "Organic traffic by segment:\n- " + "\n- ".join(parts) + "\n\n"
+        "Search Console position by device: " +
+        ", ".join(f"{r['device']} {r['position']:.1f}" for r in out.get("gsc_device_rows", []))
+        + "\n\nCall out any segment where performance diverges sharply from the "
+        "site average, and what to do about it. Mobile ranking worse than desktop "
+        "matters more under mobile-first indexing."
+    )
+    out["narrative"] = reasoning(prompt, api_key, model)
+    out["key_points"] = parts[:3]
+    return out
+
+
+def module_trends(ga4_ts: dict, gsc_ts: list, api_key, model) -> dict:
+    """
+    Daily organic time series — GA4 sessions and GSC clicks.
+
+    Every other module compares two period totals, which can say "down 12%" but
+    never when it moved. This is the only module with a date axis.
+    """
+    ga_rows = (ga4_ts or {}).get("rows", []) or []
+    series = [{"date": r.get("date", ""), "sessions": r.get("sessions", 0),
+               "conversions": r.get("conversions", 0)} for r in ga_rows if r.get("date")]
+    gsc_by_date = {r.get("date", ""): r for r in (gsc_ts or [])}
+    for s in series:
+        g = gsc_by_date.get(s["date"], {})
+        s["clicks"] = g.get("clicks", 0)
+        s["impressions"] = g.get("impressions", 0)
+        s["position"] = round(g.get("position", 0), 1)
+
+    if not series:
+        return {"title": "Daily Trends", "series": [], "narrative": "",
+                "key_points": ["No daily data returned."]}
+
+    vals = [s["sessions"] for s in series]
+    avg = sum(vals) / len(vals) if vals else 0
+    # Flag days more than 2 standard deviations below the mean.
+    var = sum((v - avg) ** 2 for v in vals) / len(vals) if vals else 0
+    sd = var ** 0.5
+    anomalies = [{"date": s["date"], "sessions": s["sessions"],
+                  "vs_avg_pct": _pct(s["sessions"], avg)}
+                 for s in series if sd and s["sessions"] < avg - 2 * sd]
+
+    best = max(series, key=lambda s: s["sessions"])
+    worst = min(series, key=lambda s: s["sessions"])
+    prompt = (
+        f"Daily organic sessions over {len(series)} days: average {avg:,.0f}, "
+        f"peak {best['sessions']:,} on {best['date']}, trough {worst['sessions']:,} "
+        f"on {worst['date']}.\n"
+        f"Days more than 2 SD below average: "
+        f"{', '.join(a['date'] for a in anomalies) or 'none'}.\n\n"
+        "Comment on the trend shape (growth, decline, plateau, weekly seasonality) "
+        "and whether any drop looks like an algorithm event vs normal variance."
+    )
+    return {
+        "title": "Daily Trends",
+        "series": series,
+        "avg_sessions": round(avg),
+        "peak_date": best["date"],
+        "trough_date": worst["date"],
+        "anomalies": anomalies,
+        "narrative": reasoning(prompt, api_key, model),
+        "key_points": [
+            f"{len(series)} days of daily data.",
+            f"Average {avg:,.0f} sessions/day; peak {best['sessions']:,} on {best['date']}.",
+            (f"{len(anomalies)} day(s) fell >2 SD below average."
+             if anomalies else "No statistical anomalies detected."),
+        ],
+    }
+
+
+def module_hourly_pulse(rows: list, api_key, model) -> dict:
+    """
+    Hour-by-hour Search Console clicks (last 10 days).
+
+    Standard GSC data lags 2-3 days; the HOUR dimension does not. This is the
+    earliest signal that something broke today.
+    """
+    rows = rows or []
+    if not rows:
+        return {"title": "Hourly Pulse", "hours": [], "narrative": "",
+                "key_points": ["No hourly data returned (needs Search Console HOURLY_ALL)."]}
+
+    hours = [{"hour": r.get("hour_iso", ""), "clicks": r.get("clicks", 0),
+              "impressions": r.get("impressions", 0)} for r in rows]
+    # Compare the last full 24h against the 24h before it.
+    last24 = hours[-24:] if len(hours) >= 24 else hours
+    prev24 = hours[-48:-24] if len(hours) >= 48 else []
+    c_last = sum(h["clicks"] for h in last24)
+    c_prev = sum(h["clicks"] for h in prev24)
+    delta = _pct(c_last, c_prev) if prev24 else 0.0
+
+    prompt = (
+        f"Search clicks in the most recent 24 hours: {c_last:,}. "
+        f"Prior 24 hours: {c_prev:,} ({delta:+.0f}%).\n\n"
+        "This is near-real-time Search Console data, ahead of the usual 2-3 day lag. "
+        "Say whether this looks like normal daily rhythm or an emerging problem."
+    )
+    return {
+        "title": "Hourly Pulse",
+        "hours": hours,
+        "clicks_last_24h": c_last,
+        "clicks_prev_24h": c_prev,
+        "delta_pct": delta,
+        "narrative": reasoning(prompt, api_key, model),
+        "key_points": [
+            f"{len(hours)} hourly data points (last 10 days max).",
+            f"Last 24h: {c_last:,} clicks ({delta:+.0f}% vs prior 24h)."
+            if prev24 else f"Last 24h: {c_last:,} clicks.",
+        ],
+    }
+
+
+def module_discover(dv: dict, api_key, model) -> dict:
+    """Google Discover performance — invisible to a web-search-only pipeline."""
+    pages = (dv or {}).get("pages", []) or []
+    totals = (dv or {}).get("totals", {}) or {}
+    if not pages:
+        return {"title": "Google Discover", "pages": [], "narrative": "",
+                "key_points": ["No Discover impressions in this period — "
+                               "the site may not be Discover-eligible."]}
+
+    prompt = (
+        f"Google Discover: {totals.get('clicks',0):,.0f} clicks from "
+        f"{totals.get('impressions',0):,.0f} impressions across {len(pages)} pages "
+        f"(CTR {totals.get('ctr',0)*100:.1f}%).\n"
+        f"Top pages: {', '.join(p.get('page','') for p in pages[:5])}\n\n"
+        "Discover rewards fresh, visual, interest-led content rather than keyword "
+        "targeting. Say what content type is winning here and how to get more."
+    )
+    return {
+        "title": "Google Discover",
+        "discover_clicks": round(totals.get("clicks", 0)),
+        "discover_impressions": round(totals.get("impressions", 0)),
+        "discover_ctr_pct": round(totals.get("ctr", 0) * 100, 2),
+        "pages": [{"page": p.get("page", ""), "clicks": p.get("clicks", 0),
+                   "impressions": p.get("impressions", 0),
+                   "ctr_pct": round(p.get("ctr", 0) * 100, 2)} for p in pages[:20]],
+        "trend": (dv or {}).get("trend", [])[:90],
+        "narrative": reasoning(prompt, api_key, model),
+        "key_points": [f"{totals.get('clicks',0):,.0f} Discover clicks across "
+                       f"{len(pages)} pages."],
+    }
+
+
+def module_index_inspection(ins: dict, api_key, model) -> dict:
+    """
+    Per-URL index status from the URL Inspection API.
+
+    Module 9 infers indexation from sitemap counts and impression proxies. This
+    asks Google directly, and surfaces canonical conflicts — where Google picked
+    a different canonical than the page declared — which nothing else detects.
+    """
+    rows = (ins or {}).get("rows", []) or []
+    summary = (ins or {}).get("summary", {}) or {}
+    if not rows:
+        return {"title": "Index Inspection", "urls": [], "narrative": "",
+                "key_points": ["No URLs inspected."]}
+
+    problems = [r for r in rows if not r.get("indexed") or r.get("canonical_mismatch")]
+    states = summary.get("by_coverage_state", {}) or {}
+    state_lines = "\n".join(f"- {k}: {v}" for k, v in list(states.items())[:8])
+
+    prompt = (
+        f"Inspected {summary.get('total',0)} URLs: {summary.get('indexed',0)} indexed, "
+        f"{summary.get('not_indexed',0)} not indexed, "
+        f"{summary.get('canonical_mismatches',0)} canonical mismatches.\n\n"
+        f"Coverage states:\n{state_lines}\n\n"
+        "A canonical mismatch means Google chose a different canonical than the page "
+        "declared — usually duplicate content or a bad canonical tag. Give prioritised "
+        "technical fixes for the states above."
+    )
+    return {
+        "title": "Index Inspection",
+        "urls_inspected": summary.get("total", 0),
+        "indexed": summary.get("indexed", 0),
+        "not_indexed": summary.get("not_indexed", 0),
+        "indexation_rate": summary.get("indexation_rate", 0.0),
+        "canonical_mismatches": summary.get("canonical_mismatches", 0),
+        "coverage_states": [{"state": k, "urls": v} for k, v in states.items()],
+        "problem_urls": [{
+            "url": r.get("url", ""), "coverage_state": r.get("coverage_state", ""),
+            "canonical_mismatch": r.get("canonical_mismatch", False),
+            "google_canonical": r.get("google_canonical", ""),
+            "last_crawl": (r.get("last_crawl_time", "") or "")[:10],
+        } for r in problems[:25]],
+        "narrative": reasoning(prompt, api_key, model),
+        "key_points": [
+            f"{summary.get('indexed',0)}/{summary.get('total',0)} inspected URLs are indexed.",
+            (f"{summary.get('canonical_mismatches',0)} URL(s) have a canonical Google "
+             f"overrode." if summary.get("canonical_mismatches") else
+             "No canonical conflicts found."),
+        ],
     }

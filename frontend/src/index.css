@@ -16,10 +16,78 @@
   --good: #22c55e;
   --bad: #ef4444;
   --warn: #eab308;
+  /* Derived tokens so light/dark flip cleanly (no hardcoded colors in rules). */
+  --line-strong: #33333c;                     /* hover borders */
+  --btn-ink: #08110d;                          /* text on the accent button */
+  --row-hover: rgba(255, 255, 255, 0.025);     /* table row hover */
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);    /* menus / popovers */
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.6); /* modal */
+  --day-off: #39424b;                          /* disabled calendar day */
   --radius: 2px;
   --font-body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
   font-family: var(--font-body);
+
+  /* ---- Chart series palette --------------------------------------------
+     Fixed slot order, assigned in sequence and NEVER cycled — the ordering
+     is the colourblind-safety mechanism, not decoration. These are the dark
+     steps, validated against this theme's chart surface (--panel #0e1114):
+     lightness band PASS, chroma PASS, contrast PASS, worst adjacent CVD
+     ΔE 10.3 (floor band → charts also carry legends + direct labels).
+
+     The mint --accent is deliberately NOT in here: at OKLCH L 0.78 it fails
+     the dark lightness band for a data mark. It stays a UI accent, which also
+     keeps "selected" from ever reading as a series. */
+  --viz-1: #3987e5;  /* blue    */
+  --viz-2: #199e70;  /* aqua    */
+  --viz-3: #c98500;  /* yellow  */
+  --viz-4: #008300;  /* green   */
+  --viz-5: #9085e9;  /* violet  */
+  --viz-6: #e66767;  /* red     */
+  --viz-7: #d55181;  /* magenta */
+  --viz-8: #d95926;  /* orange  */
+  /* Chart chrome — recessive, one step off the surface, always solid. */
+  --viz-grid: #1b2126;
+  --viz-axis: #273038;
+  --viz-surface: var(--panel);
+}
+
+/* ---------- Light theme (same tokens, inverted surfaces) ---------- */
+:root[data-theme="light"] {
+  --bg: #f3f5f7;
+  --bg-2: #e9edf1;
+  --panel: #ffffff;
+  --panel-2: #f3f6f8;
+  --line: #dbe1e7;
+  --line-soft: #e8ecf0;
+  --line-strong: #b9c3cc;
+  --txt: #131e28;
+  --txt-dim: #566573;
+  --txt-faint: #8593a0;
+  --accent: #0ca678;
+  --accent-soft: rgba(12, 166, 120, 0.13);
+  --good: #16a34a;
+  --bad: #dc2626;
+  --warn: #b45309;
+  --btn-ink: #ffffff;
+  --row-hover: rgba(19, 30, 40, 0.04);
+  /* Light steps of the SAME eight hues — selected for the light surface
+     (#ffffff), not an automatic flip of the dark values. Validated: band,
+     chroma and CVD PASS; aqua/yellow/magenta sit below 3:1 by design, which
+     is why every chart also ships direct labels and a copyable table. */
+  --viz-1: #2a78d6;
+  --viz-2: #1baf7a;
+  --viz-3: #eda100;
+  --viz-4: #008300;
+  --viz-5: #4a3aa7;
+  --viz-6: #e34948;
+  --viz-7: #e87ba4;
+  --viz-8: #eb6834;
+  --viz-grid: #e6eaee;
+  --viz-axis: #ccd4dc;
+  --shadow: 0 8px 24px rgba(23, 43, 64, 0.12);
+  --shadow-lg: 0 18px 50px rgba(23, 43, 64, 0.18);
+  --day-off: #b3bec7;
 }
 
 * { box-sizing: border-box; }
@@ -113,13 +181,13 @@ button { font-family: inherit; cursor: pointer; }
   background: var(--panel); border: 1px solid var(--line); color: var(--txt);
   padding: 10px 12px; border-radius: 10px; font-size: 13.5px;
 }
-.select-btn:hover { border-color: #33333c; }
+.select-btn:hover { border-color: var(--line-strong); }
 .select-caret { color: var(--txt-faint); transition: transform 0.15s; }
 .select-caret.up { transform: rotate(180deg); }
 .select-menu {
   position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; right: 0;
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 5px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); max-height: 320px; overflow-y: auto;
+  box-shadow: var(--shadow); max-height: 320px; overflow-y: auto;
 }
 .select-item {
   width: 100%; text-align: left; background: transparent; border: none; color: var(--txt-dim);
@@ -135,7 +203,7 @@ button { font-family: inherit; cursor: pointer; }
   background: var(--panel); border: 1px solid var(--line); color: var(--txt);
   padding: 9px 11px; border-radius: 10px; font-size: 13px; color-scheme: dark; font-family: inherit;
 }
-.date-input:hover { border-color: #33333c; }
+.date-input:hover { border-color: var(--line-strong); }
 .dr-sep { color: var(--txt-faint); }
 .date-input.sm { padding: 6px 9px; font-size: 12px; }
 .dr-cmp { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -146,7 +214,7 @@ button { font-family: inherit; cursor: pointer; }
   background: var(--panel); border: 1px solid var(--line); color: var(--txt-dim);
   padding: 8px 11px; border-radius: 8px; font-size: 12px; font-weight: 600;
 }
-.preset:hover { color: var(--txt); border-color: #33333c; }
+.preset:hover { color: var(--txt); border-color: var(--line-strong); }
 .preset.active { background: var(--accent-soft); color: var(--txt); border-color: transparent; }
 .cmp-note { font-size: 11.5px; color: var(--txt-faint); }
 
@@ -352,7 +420,7 @@ th.sortable.active { color: var(--accent); }
     position: fixed; top: 0; bottom: 0; left: 0; z-index: 60;
     width: 264px; max-width: 82vw; overflow-y: auto;
     transform: translateX(-100%); transition: transform 0.2s ease;
-    box-shadow: 0 0 40px rgba(0, 0, 0, 0.55);
+    box-shadow: var(--shadow);
   }
   .sidebar.open { transform: translateX(0); }
   .nav-scrim { display: block; position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.55); }
@@ -393,7 +461,7 @@ th.sortable.active { color: var(--accent); }
 table.data { font-variant-numeric: tabular-nums; }
 table.data.num th:not(:first-child), table.data.num td:not(:first-child) { text-align: right; }
 table.data.num th.sortable .th-inner { justify-content: flex-end; width: 100%; }
-table.data tbody tr:hover td { background: rgba(255, 255, 255, 0.025); }
+table.data tbody tr:hover td { background: var(--row-hover); }
 .data td.trunc { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Long tables: cap height and keep the header visible while scrolling */
@@ -476,8 +544,8 @@ html::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .prog { height: 5px; }
 
 /* Primary buttons: mint with dark ink, terminal-weight */
-.btn { color: #08110d; font-weight: 700; }
-.btn:disabled { color: #08110d; }
+.btn { color: var(--btn-ink); font-weight: 700; }
+.btn:disabled { color: var(--btn-ink); }
 
 /* Mono numerals, labels, and paths — the scanability core */
 table.data { font-family: var(--font-mono); font-size: 12.5px; }
@@ -518,7 +586,7 @@ table.data th { font-family: var(--font-mono); letter-spacing: 0.08em; }
   background: var(--panel); border: 1px solid var(--line); color: var(--txt);
   padding: 9px 12px; border-radius: 2px; font-size: 13px;
 }
-.drp-btn:hover { border-color: #2c3640; }
+.drp-btn:hover { border-color: var(--line-strong); }
 .drp-ico { color: var(--txt-faint); flex-shrink: 0; }
 .drp-btn-text { font-family: var(--font-mono); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .drp-days { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--accent); flex-shrink: 0; }
@@ -526,7 +594,7 @@ table.data th { font-family: var(--font-mono); letter-spacing: 0.08em; }
   position: absolute; z-index: 45; top: calc(100% + 6px); right: 0; left: auto;
   width: min(94vw, 640px);
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55); padding: 14px;
+  box-shadow: var(--shadow); padding: 14px;
   display: flex; flex-direction: column; gap: 12px;
 }
 .drp-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -541,7 +609,7 @@ table.data th { font-family: var(--font-mono); letter-spacing: 0.08em; }
   width: 28px; height: 28px; border-radius: 2px; display: grid; place-items: center;
   flex-shrink: 0; margin-top: 2px;
 }
-.drp-nav:hover { color: var(--txt); border-color: #2c3640; }
+.drp-nav:hover { color: var(--txt); border-color: var(--line-strong); }
 .drp-month { flex: 0 0 auto; }
 .drp-month-name { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--txt); text-align: center; padding: 4px 0 8px; }
 .drp-grid { display: grid; grid-template-columns: repeat(7, 32px); gap: 2px; }
@@ -552,12 +620,12 @@ table.data th { font-family: var(--font-mono); letter-spacing: 0.08em; }
   display: grid; place-items: center; padding: 0;
 }
 .drp-day:hover:not(:disabled) { background: var(--panel); color: var(--txt); }
-.drp-day.off { color: #39424b; cursor: default; }
+.drp-day.off { color: var(--day-off); cursor: default; }
 /* compare window (amber) under the primary range (mint) — GA4 logic */
 .drp-day.cmp { background: rgba(234, 179, 8, 0.10); color: var(--txt); }
 .drp-day.cmp-edge { background: rgba(234, 179, 8, 0.28); color: var(--warn); font-weight: 600; }
 .drp-day.in { background: var(--accent-soft); color: var(--txt); }
-.drp-day.edge { background: var(--accent); color: #08110d; font-weight: 700; }
+.drp-day.edge { background: var(--accent); color: var(--btn-ink); font-weight: 700; }
 
 .drp-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line-soft); padding-top: 12px; }
 .drp-note { font-family: var(--font-mono); font-size: 11.5px; color: var(--txt-faint); }
@@ -575,7 +643,7 @@ table.data th { font-family: var(--font-mono); letter-spacing: 0.08em; }
 .modal {
   position: relative; width: min(94vw, 420px);
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); padding: 22px 22px 18px;
+  box-shadow: var(--shadow-lg); padding: 22px 22px 18px;
 }
 .modal-x { position: absolute; top: 12px; right: 12px; background: transparent; border: none; color: var(--txt-faint); padding: 4px; border-radius: 2px; }
 .modal-x:hover { color: var(--txt); background: var(--panel); }
@@ -598,7 +666,7 @@ table.data th { font-family: var(--font-mono); letter-spacing: 0.08em; }
 .profile-pop {
   position: absolute; z-index: 45; top: calc(100% + 8px); right: 0; width: 280px;
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55); padding: 14px;
+  box-shadow: var(--shadow); padding: 14px;
 }
 .pp-head { display: flex; align-items: center; gap: 11px; padding-bottom: 12px; border-bottom: 1px solid var(--line-soft); margin-bottom: 12px; }
 .pp-name { font-size: 14px; font-weight: 700; }
@@ -616,9 +684,93 @@ table.data th { font-family: var(--font-mono); letter-spacing: 0.08em; }
 .pp-perms li { font-size: 12.5px; color: var(--txt-dim); padding-left: 14px; position: relative; }
 .pp-perms li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); }
 .pp-signout { display: flex; align-items: center; gap: 8px; width: 100%; justify-content: center; background: var(--panel); border: 1px solid var(--line); color: var(--txt-dim); padding: 9px; border-radius: 2px; font-size: 13px; margin-top: 4px; }
-.pp-signout:hover { color: var(--txt); border-color: #2c3640; }
+.pp-signout:hover { color: var(--txt); border-color: var(--line-strong); }
 
 /* PageSpeed unavailable (couldn't analyze — not a real 0 score) */
 .ps-na { width: 76px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .ps-na-v { width: 56px; height: 56px; border-radius: 50%; border: 2px dashed var(--line); display: grid; place-items: center; color: var(--txt-faint); font-family: var(--font-mono); font-size: 13px; }
 .ps-na-l { font-size: 10px; color: var(--txt-faint); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* Two-mode run buttons */
+.run-btns { display: flex; gap: 8px; margin-top: 23px; flex: 0 0 auto; }
+.run-btns .run-btn { margin-top: 0; }
+.run-btn-ai { margin-top: 0; background: var(--panel); border: 1px solid var(--line); color: var(--txt-dim); }
+.run-btn-ai:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+@media (max-width: 640px) { .run-btns { width: 100%; } .run-btns .btn { flex: 1; } }
+
+/* Table copy / CSV tools */
+.dt-wrap { position: relative; }
+.dt-tools { display: flex; gap: 6px; justify-content: flex-end; margin-bottom: 6px; }
+.dt-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--txt-dim);
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em;
+  padding: 4px 9px; border-radius: 2px;
+}
+.dt-btn:hover { color: var(--accent); border-color: var(--accent); }
+.dt-btn svg { flex-shrink: 0; }
+
+/* Theme toggle in the profile popover */
+.pp-theme { display: flex; gap: 6px; }
+.pp-theme-btn {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--txt-dim);
+  padding: 8px; border-radius: 2px; font-size: 12.5px;
+}
+.pp-theme-btn:hover { color: var(--txt); border-color: var(--line-strong); }
+.pp-theme-btn.active { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
+/* Line chart (Daily Trends, Hourly Pulse) */
+.linechart { display: flex; flex-direction: column; gap: 9px; }
+.lc-legend { display: flex; flex-wrap: wrap; gap: 15px; font-size: 12px; color: var(--txt-dim); }
+.lc-key { display: inline-flex; align-items: center; gap: 7px; }
+/* Lines get a line key, not a filled box — the legend mirrors the mark. */
+.lc-key i { width: 12px; height: 2px; border-radius: 1px; display: inline-block; }
+.lc-plot { position: relative; }
+.lc-svg { width: 100%; display: block; overflow: visible; }
+/* Axis text wears text tokens, never a series colour. */
+.lc-tick { fill: var(--txt-faint); font-size: 10.5px; font-family: var(--font-mono); }
+.lc-axis {
+  display: flex; justify-content: space-between;
+  font-size: 11px; color: var(--txt-faint); font-family: var(--font-mono);
+  padding: 0 16px 0 52px;
+}
+.lc-tooltip {
+  position: absolute; top: 6px; pointer-events: none; z-index: 3;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 10px; box-shadow: var(--shadow);
+  min-width: 132px;
+}
+.lc-tt-x { font-size: 11px; color: var(--txt-dim); margin-bottom: 5px; font-family: var(--font-mono); }
+.lc-tt-row { display: flex; align-items: center; gap: 7px; font-size: 12px; line-height: 1.7; }
+.lc-tt-row i { width: 10px; height: 2px; border-radius: 1px; flex-shrink: 0; }
+/* Value leads, series name follows — the reader has the series, wants the number. */
+.lc-tt-row b { color: var(--txt); font-family: var(--font-mono); font-weight: 600; }
+.lc-tt-row span { color: var(--txt-dim); }
+
+/* Two-up small multiples — the honest alternative to a second y-axis. */
+.viz-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.viz-pair > .card { margin-bottom: 0; }
+
+/* Brand vs non-brand split bar */
+/* 2px surface gap does the separating — never a border drawn around a fill.
+   In-segment labels only render when they fit (>=14% width), so text is
+   never clipped; below that the legend and the figures below carry it. */
+.split-bar { display: flex; height: 30px; border-radius: 4px; gap: 2px; background: transparent; }
+.split-seg {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11.5px; font-weight: 600; color: #ffffff; min-width: 0;
+  border-radius: 3px; white-space: nowrap;
+}
+.split-legend { display: flex; gap: 16px; font-size: 12px; color: var(--txt-dim); margin-top: 9px; flex-wrap: wrap; }
+
+/* Coverage-state / segment chips */
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 12px;
+  background: var(--bg-2); border: 1px solid var(--line-soft);
+  border-radius: 999px; padding: 5px 11px; color: var(--txt-dim);
+}
+.chip b { color: var(--txt); font-weight: 600; }
+.chip.warn { border-color: rgba(255, 176, 32, 0.35); }
+.chip.bad { border-color: rgba(255, 107, 107, 0.35); }

@@ -98,6 +98,11 @@ class Client(Base):
     display_name: Mapped[str] = mapped_column(String(200))
     ga4_property_id_enc: Mapped[str] = mapped_column(Text, default="")  # encrypted
     gsc_site_url: Mapped[str] = mapped_column(String(500), default="")
+    # Comma-separated brand variants ("HDFC, HDFC Bank, hdfcbank"). Drives the
+    # server-side branded/non-branded Search Console split. Left empty the code
+    # derives terms from the domain, which cannot know that hdfcbank.com is also
+    # searched as plain "hdfc" — only a human does.
+    brand_terms: Mapped[str] = mapped_column(Text, default="")
     organic_only: Mapped[bool] = mapped_column(Boolean, default=True)
     use_demo_data: Mapped[bool] = mapped_column(Boolean, default=False)
     credential_id: Mapped[str | None] = mapped_column(

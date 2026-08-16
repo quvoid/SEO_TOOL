@@ -21,6 +21,8 @@ class ClientOut(BaseModel):
     use_demo_data: bool
     credential_label: str | None = None
     ga4_property_id_masked: str | None = None  # e.g. "•••4846"
+    # Comma-separated branded-query variants; "" means derive from the domain.
+    brand_terms: str = ""
 
 
 class ClientCreate(BaseModel):
@@ -43,6 +45,8 @@ class ReportCreate(BaseModel):
     compare_start: str | None = None
     compare_end: str | None = None
     model: str = "gemini-2.0-flash"
+    # False = skip AI narratives (fast, free, quota-proof). Default for daily use.
+    with_ai: bool = False
 
 
 class ReportOut(BaseModel):

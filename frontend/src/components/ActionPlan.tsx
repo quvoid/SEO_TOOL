@@ -4,7 +4,7 @@
 import { useMemo, useState } from "react";
 import { Download } from "lucide-react";
 import type { Results } from "../types";
-import { Card, StatTiles, fmt } from "./viz";
+import { Card, DataTable, StatTiles, fmt } from "./viz";
 import { Select } from "./Select";
 
 type Team = "SEO" | "Content" | "CRO" | "Dev";
@@ -178,7 +178,7 @@ export function ActionPlan({ results }: { results: Results }) {
         {items.length === 0 ? (
           <div className="muted" style={{ marginTop: 14 }}>No actions for this team in the current report.</div>
         ) : (
-          <div className="table-scroll"><table className="data">
+          <DataTable name={`action-plan-${team.toLowerCase()}`}><table className="data">
             <thead><tr><th>#</th><th>Team</th><th>Action</th><th>Target</th><th>Impact</th><th>Source</th></tr></thead>
             <tbody>
               {items.map((i, idx) => (
@@ -192,7 +192,7 @@ export function ActionPlan({ results }: { results: Results }) {
                 </tr>
               ))}
             </tbody>
-          </table></div>
+          </table></DataTable>
         )}
       </Card>
     </div>

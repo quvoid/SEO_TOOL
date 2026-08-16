@@ -37,6 +37,7 @@ def _to_out(client: Client, viewer: User) -> ClientOut:
         use_demo_data=client.use_demo_data,
         credential_label=client.credential.label if client.credential else None,
         ga4_property_id_masked=_mask_property_id(client, viewer),
+        brand_terms=client.brand_terms or "",
     )
 
 

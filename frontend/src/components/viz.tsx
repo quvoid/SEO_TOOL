@@ -1,6 +1,6 @@
 // Lightweight, flat visualization primitives (SVG/CSS — no chart lib).
-import { useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { useRef, useState, type ReactNode } from "react";
+import { ArrowDown, ArrowUp, Check, Copy, Download } from "lucide-react";
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v) || 0);
 export const fmt = (v: unknown) => {
@@ -40,6 +40,174 @@ export function HBars({
       ))}
     </div>
   );
+}
+
+/**
+ * Multi-series line chart on ONE shared y axis.
+ *
+ * The previous version scaled each series to its own max so that different
+ * magnitudes "fit together". That is a dual-axis chart, and it invents
+ * correlations that aren't in the data — plotting impressions (0-350k) against
+ * average position (0-20) made the two look coupled when nothing linked them.
+ * Series on one plot must therefore share a unit and a scale; anything else
+ * belongs in its own chart beside it (see the two-up small multiples in
+ * Daily Trends).
+ *
+ * `invertY` flips the axis for rank-like measures where 1 is best.
+ */
+export function LineChart({
+  points,
+  series,
+  height = 210,
+  xLabel,
+  yFormat = fmt,
+  invertY = false,
+  area = false,
+  valueSuffix = "",
+  vbWidth = 800,
+}: {
+  points: Record<string, unknown>[];
+  series: { key: string; label: string; color: string }[];
+  height?: number;
+  xLabel?: (p: Record<string, unknown>, i: number) => string;
+  yFormat?: (v: unknown) => string;
+  invertY?: boolean;
+  area?: boolean;
+  valueSuffix?: string;
+  /** viewBox width. The SVG scales proportionally, so a half-width card needs a
+   *  narrower box or the plot renders squat (800-wide in a 430px column collapses
+   *  to ~114px tall). Pass ~440 for small multiples. */
+  vbWidth?: number;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  if (points.length < 2) return <div className="empty">Not enough data to plot.</div>;
+
+  const W = vbWidth, PAD_L = 52, PAD_R = 16, PAD_T = 14, PAD_B = 24;
+  const H = Math.max(120, height), iw = W - PAD_L - PAD_R, ih = H - PAD_T - PAD_B;
+
+  // One domain over EVERY series — never per-series.
+  const all = series.flatMap((s) => points.map((p) => num(p[s.key])));
+  const dataMin = Math.min(...all), dataMax = Math.max(...all);
+  // A filled area encodes magnitude by the size of the fill, so it must sit on
+  // zero. A plain line encodes CHANGE by slope, and forcing zero there buries
+  // the trend in dead space — 8k-12.5k on a 0-15k axis is a flat ribbon in the
+  // top third. Fit the domain to the data for lines; keep zero for areas.
+  const zeroBase = area || dataMin <= 0;
+  const floor = invertY || !zeroBase ? dataMin : Math.min(0, dataMin);
+  const ticks = niceTicks(floor, dataMax, 4);
+  const lo = ticks[0], hi = ticks[ticks.length - 1];
+  const span = Math.max(1e-9, hi - lo);
+
+  const x = (i: number) => PAD_L + (i / (points.length - 1)) * iw;
+  const y = (v: number) => {
+    const t = (v - lo) / span;
+    return PAD_T + (invertY ? t * ih : ih - t * ih);
+  };
+
+  const idx = hover == null ? null : Math.max(0, Math.min(points.length - 1, hover));
+  const single = series.length === 1;
+
+  return (
+    <div className="linechart">
+      {/* A legend is mandatory for 2+ series; one series is named by the title. */}
+      {!single && (
+        <div className="lc-legend">
+          {series.map((s) => (
+            <span className="lc-key" key={s.key}>
+              <i style={{ background: s.color }} /> {s.label}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="lc-plot">
+        <svg viewBox={`0 0 ${W} ${H}`} className="lc-svg" role="img"
+             aria-label={`${series.map((s) => s.label).join(" and ")} over time`}
+             onMouseLeave={() => setHover(null)}
+             onMouseMove={(e) => {
+               const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+               const rel = ((e.clientX - r.left) / r.width) * W;
+               setHover(Math.round(((rel - PAD_L) / iw) * (points.length - 1)));
+             }}>
+          {/* Solid hairline grid + y ticks — never dashed, always recessive. */}
+          {ticks.map((t) => (
+            <g key={t}>
+              <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)}
+                    stroke="var(--viz-grid)" strokeWidth="1" />
+              <text x={PAD_L - 8} y={y(t) + 3.5} textAnchor="end" className="lc-tick">
+                {yFormat(t)}
+              </text>
+            </g>
+          ))}
+          {series.map((s) => {
+            const vals = points.map((p) => num(p[s.key]));
+            const d = vals.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+            return (
+              <g key={s.key}>
+                {area && single && (
+                  <path d={`${d} L${x(points.length - 1).toFixed(1)},${y(lo)} L${x(0).toFixed(1)},${y(lo)} Z`}
+                        fill={s.color} opacity="0.10" />
+                )}
+                <path d={d} fill="none" stroke={s.color} strokeWidth="2"
+                      strokeLinejoin="round" strokeLinecap="round" />
+              </g>
+            );
+          })}
+          {idx != null && (
+            <>
+              <line x1={x(idx)} x2={x(idx)} y1={PAD_T} y2={PAD_T + ih}
+                    stroke="var(--viz-axis)" strokeWidth="1" />
+              {series.map((s) => (
+                // 2px surface ring keeps the marker legible where lines cross.
+                <circle key={s.key} cx={x(idx)} cy={y(num(points[idx][s.key]))} r="4"
+                        fill={s.color} stroke="var(--viz-surface)" strokeWidth="2" />
+              ))}
+            </>
+          )}
+        </svg>
+        {idx != null && (
+          <div className="lc-tooltip"
+               style={{ left: `${(x(idx) / W) * 100}%`,
+                        transform: `translateX(${idx > points.length / 2 ? "-104%" : "4%"})` }}>
+            <div className="lc-tt-x">{xLabel ? xLabel(points[idx], idx) : `#${idx}`}</div>
+            {series.map((s) => (
+              <div className="lc-tt-row" key={s.key}>
+                <i style={{ background: s.color }} />
+                <b>{yFormat(num(points[idx][s.key]))}{valueSuffix}</b>
+                <span>{s.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="lc-axis">
+        <span>{xLabel ? xLabel(points[0], 0) : ""}</span>
+        <span>{xLabel ? xLabel(points[points.length - 1], points.length - 1) : ""}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Axis ticks on clean round numbers (0 / 500 / 1,000), never raw data extremes. */
+function niceTicks(min: number, max: number, count = 4): number[] {
+  if (!isFinite(min) || !isFinite(max) || max <= min) return [min || 0, (max || 0) + 1];
+  const raw = (max - min) / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  // 1/2/5 only — a 2.5 multiplier yields .25 steps that print as 6.8 / 7.3
+  // rather than the clean round numbers an axis is supposed to carry.
+  const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? mag * 10;
+  // A zero/!finite step would make the loop below never terminate and hang the
+  // render — bail to a plain two-tick axis instead.
+  if (!isFinite(step) || step <= 0) return [min, max];
+  // The domain MUST contain the data. Rounding the top tick down (e.g. stopping
+  // at 10,000 when the peak is 12,500) pushes those points above the plot, where
+  // `overflow: visible` happily draws them straight through the legend.
+  const start = Math.floor(min / step) * step;
+  const end = Math.ceil(max / step) * step;
+  const out: number[] = [];
+  for (let v = start; v <= end + step * 0.5 && out.length < 64; v += step) {
+    out.push(Math.round(v * 1e6) / 1e6);
+  }
+  return out.length >= 2 ? out : [min, max];
 }
 
 /** Donut for 2+ segments. */
@@ -164,6 +332,60 @@ export function useSort<T extends Record<string, unknown>>(
   };
   const sort: SortState = { key, dir, toggle };
   return { sorted, sort };
+}
+
+/**
+ * Wraps a <table className="data"> and adds Copy (TSV → paste into Excel/Sheets)
+ * and CSV download. Reads the rendered table's DOM, so it works for every table
+ * with no per-table wiring. Replaces the old `<div className="table-scroll">`.
+ */
+export function DataTable({ children, name = "table" }: { children: ReactNode; name?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
+
+  const rows = (): string[][] => {
+    const table = ref.current?.querySelector("table");
+    if (!table) return [];
+    const out: string[][] = [];
+    table.querySelectorAll("tr").forEach((tr) => {
+      const cells = [...tr.querySelectorAll("th,td")].map((c) => (c.textContent || "").replace(/\s+/g, " ").trim());
+      if (cells.length) out.push(cells);
+    });
+    return out;
+  };
+
+  const copy = async () => {
+    const tsv = rows().map((r) => r.join("\t")).join("\n");
+    try {
+      await navigator.clipboard.writeText(tsv);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard blocked — CSV download still works */ }
+  };
+
+  const download = () => {
+    const esc = (s: string) => `"${s.replace(/"/g, '""')}"`;
+    const csv = rows().map((r) => r.map(esc).join(",")).join("\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="dt-wrap">
+      <div className="dt-tools no-print">
+        <button className="dt-btn" onClick={copy} title="Copy for Excel / Sheets">
+          {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
+        </button>
+        <button className="dt-btn" onClick={download} title="Download as CSV"><Download size={12} /> CSV</button>
+      </div>
+      <div className="table-scroll" ref={ref}>{children}</div>
+    </div>
+  );
 }
 
 export function SortTh({ k, sort, children }: { k: string; sort: SortState; children: ReactNode }) {

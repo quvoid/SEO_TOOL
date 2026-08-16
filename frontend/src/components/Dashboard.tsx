@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   LayoutDashboard, ListChecks, Search, LogOut, Download, History as HistoryIcon,
-  Menu, Shield, ShieldCheck, Zap, AlertTriangle, X,
+  Menu, Shield, ShieldCheck, Zap, AlertTriangle, X, Sparkles, Sun, Moon,
 } from "lucide-react";
 import { USE_MOCK, api, type Account, type RunProgress } from "../api";
 import { MODULE_ORDER, type Client, type Results, type User } from "../types";
@@ -81,6 +81,7 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
   const [dontAsk, setDontAsk] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [account, setAccount] = useState<Account | null>(null);
+  const [theme, setTheme] = useState<string>(() => document.documentElement.dataset.theme || "dark");
   const profileRef = useRef<HTMLDivElement>(null);
 
   const loadHistory = useCallback(() => {
@@ -118,7 +119,7 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
     return () => document.removeEventListener("keydown", onKey);
   }, [navOpen]);
 
-  async function run() {
+  async function run(withAi: boolean) {
     setRunning(true);
     setResults(null);
     setError("");
@@ -130,7 +131,7 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
     // history — it becomes the "since last report" comparison baseline.
     const prevRec = history.find((h) => h.status === "done" && h.client_id === clientId);
     try {
-      const r = await api.runReport(clientId, range, setStatus, setProgress);
+      const r = await api.runReport(clientId, range, setStatus, setProgress, withAi);
       setResults(r);
       loadHistory();
       if (prevRec) api.getReport(prevRec.id).then((p) => setPrevResults(p)).catch(() => {});
@@ -142,23 +143,35 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
     }
   }
 
-  // Gate a live run behind the cost confirmation. Demo runs are free, and the
-  // "don't ask again" choice skips it for the rest of the session.
-  function requestRun() {
+  // Default path: no AI — fast, free, quota-proof.
+  function runNoAi() {
     if (!clientId || running) return;
-    if (activeClient?.use_demo_data || skipConfirm) { run(); return; }
+    run(false);
+  }
+
+  // AI path costs Gemini quota + serper credits, so gate it behind confirmation
+  // (skipped for demo clients and after "don't ask again").
+  function requestRunAi() {
+    if (!clientId || running) return;
+    if (activeClient?.use_demo_data || skipConfirm) { run(true); return; }
     setConfirmOpen(true);
   }
 
   function confirmRun() {
     if (dontAsk) setSkipConfirm(true);
     setConfirmOpen(false);
-    run();
+    run(true);
   }
 
   function toggleProfile() {
     setProfileOpen((o) => !o);
     if (!account) api.account().then(setAccount).catch(() => {});
+  }
+
+  function applyTheme(t: string) {
+    document.documentElement.dataset.theme = t;
+    localStorage.setItem("theme", t);
+    setTheme(t);
   }
 
   // Close the profile popover on outside-click / Escape.
@@ -340,6 +353,18 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
                   </ul>
                 </div>
 
+                <div className="pp-section">
+                  <div className="pp-label"><Sun size={13} /> Appearance</div>
+                  <div className="pp-theme">
+                    <button className={`pp-theme-btn ${theme === "dark" ? "active" : ""}`} onClick={() => applyTheme("dark")}>
+                      <Moon size={13} /> Dark
+                    </button>
+                    <button className={`pp-theme-btn ${theme === "light" ? "active" : ""}`} onClick={() => applyTheme("light")}>
+                      <Sun size={13} /> Light
+                    </button>
+                  </div>
+                </div>
+
                 <button className="pp-signout" onClick={onLogout}><LogOut size={14} /> Sign out</button>
               </div>
             )}
@@ -368,9 +393,16 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
                 <label>Date range</label>
                 <DateRange value={range} onChange={setRange} />
               </div>
-              <button className="btn sm run-btn" onClick={requestRun} disabled={running || !clientId}>
-                {running ? <><span className="spinner" />&nbsp; Running…</> : "Run Report"}
-              </button>
+              <div className="run-btns">
+                <button className="btn sm run-btn" onClick={runNoAi} disabled={running || !clientId}
+                  title="Fast report with all data, tables and charts — no AI narratives (free, no quota)">
+                  {running ? <><span className="spinner" />&nbsp; Running…</> : "Run Report"}
+                </button>
+                <button className="btn sm ghost run-btn-ai" onClick={requestRunAi} disabled={running || !clientId}
+                  title="Adds AI-written analysis to every module — uses Gemini quota and takes ~90s">
+                  <Sparkles size={14} />&nbsp; With AI
+                </button>
+              </div>
             </div>
             {activeClient && (
               <div style={{ marginBottom: 18 }}>
@@ -444,9 +476,9 @@ export function Dashboard({ user, onLogout }: { user: User; onLogout: () => void
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <button className="modal-x" onClick={() => setConfirmOpen(false)} aria-label="Close"><X size={16} /></button>
             <div className="modal-icon"><AlertTriangle size={20} /></div>
-            <h2 className="modal-title">Run a live report?</h2>
+            <h2 className="modal-title">Run with AI analysis?</h2>
             <p className="modal-body">
-              This runs the full analysis for <b>{activeClient?.display_name}</b> over the last <b>{rangeDays} days</b> — it spends real quota:
+              This adds AI-written analysis for <b>{activeClient?.display_name}</b> over the last <b>{rangeDays} days</b> — it spends real quota:
             </p>
             <ul className="modal-cost">
               <li><Zap size={13} /> {MODULE_ORDER.length + 1} AI analyses (Gemini)</li>

@@ -55,7 +55,8 @@ def _authorized(db: DbSession, user: User, client: Client) -> bool:
 
 def _run_job(report_id: str, days: int, model: str, analyst_name: str,
              end_date: str | None = None, start_date: str | None = None,
-             prev_start: str | None = None, prev_end: str | None = None) -> None:
+             prev_start: str | None = None, prev_end: str | None = None,
+             with_ai: bool = False) -> None:
     """Background worker — owns its own DB session (request session is closed)."""
     db = SessionLocal()
     try:
@@ -71,13 +72,14 @@ def _run_job(report_id: str, days: int, model: str, analyst_name: str,
             "ga4_property_id": client_ga4_property_id(client),
             "gsc_site_url": client.gsc_site_url,
             "organic_only": client.organic_only,
+            "brand_terms": client.brand_terms or "",
         }
         credential = resolve_credential(client)
 
         results = report_service.run_report(
             client_cfg, credential, days, model, analyst_name,
             end_date=end_date, start_date=start_date,
-            prev_start=prev_start, prev_end=prev_end,
+            prev_start=prev_start, prev_end=prev_end, with_ai=with_ai,
             on_progress=lambda i, t, label: _PROGRESS.__setitem__(
                 report_id, {"i": i, "t": t, "label": label}),
         )
@@ -151,7 +153,7 @@ def create_report(body: ReportCreate, background: BackgroundTasks,
     db.commit()
     db.refresh(report)
 
-    background.add_task(_run_job, report.id, days, body.model, user.name, end_date, start_date, prev_start, prev_end)
+    background.add_task(_run_job, report.id, days, body.model, user.name, end_date, start_date, prev_start, prev_end, body.with_ai)
     return ReportOut(id=report.id, client_id=client.id, status=report.status.value)
 
 

@@ -45,6 +45,27 @@ def _clarity_for_site(rows: list[dict], site: str) -> list[dict]:
     return kept
 
 
+# Keys the Explorer-backed modules (10-17) read. Demo clients and any live run
+# where a fetch fails fall back to these, so the modules render an honest empty
+# state instead of raising.
+_EMPTY_EXPLORER: dict = {
+    "landing_pages": {"rows": []},
+    "brand_split": {"branded": [], "non_branded": [], "totals": {}},
+    "intent": {"buckets": {}},
+    "segments": {},
+    "ga4_timeseries": {"rows": []},
+    "gsc_timeseries": [],
+    "hourly": [],
+    "discover": {"pages": [], "trend": [], "totals": {}},
+    "inspection": {"rows": [], "summary": {}},
+}
+
+# How many URLs a report inspects. The URL Inspection API allows 2,000/day per
+# property on a rolling window and results are cached per URL, but keep the
+# per-run cost small and predictable.
+_INSPECT_URL_BUDGET = 25
+
+
 def _funnel_from_events(events: list[dict]) -> list[dict]:
     """Fallback flat funnel built from the already-fetched event totals, used
     when the device-segmented GA4 funnel query returns nothing."""
@@ -74,6 +95,9 @@ def load_data(client_cfg: dict, service_account_info: dict, days: int,
             "site": demo_data.SITE_URL,
             "is_demo": True,
             "errors": [],
+            # Explorer-backed modules need live APIs; demo clients get honest
+            # empty states rather than invented numbers.
+            **{k: v for k, v in _EMPTY_EXPLORER.items()},
         }
 
     sa = service_account_info
@@ -99,7 +123,7 @@ def load_data(client_cfg: dict, service_account_info: dict, days: int,
         lambda: connectors.fetch_gsc_queries_with_prev(site, sa, days, top_n=200, end_date=end_date, **pv), ([], []), "GSC queries error"
     )
     gsc_pairs = _try(lambda: connectors.fetch_gsc_query_page_pairs(site, sa, days, top_n=2000, end_date=end_date), [], "GSC pairs error")
-    indexation = _try(lambda: connectors.fetch_gsc_indexation_summary(site, sa),
+    indexation = _try(lambda: connectors.fetch_gsc_indexation_summary(site, sa, days),
                       {"submitted_urls": 0, "indexed_urls": 0, "indexation_rate": 0.0, "sitemaps": []},
                       "GSC indexation error")
 
@@ -119,12 +143,75 @@ def load_data(client_cfg: dict, service_account_info: dict, days: int,
     if not funnel:
         funnel = _funnel_from_events(events)
 
+    # --- Explorer-backed data (modules 10-17) -------------------------------
+    # Each is independently guarded: one failing source degrades that module to
+    # an empty state instead of failing the whole report.
+    landing_pages = _try(
+        lambda: connectors.fetch_ga4_landing_pages(prop, sa, days, organic_only,
+                                                   end_date=end_date, limit=250, **pv),
+        _EMPTY_EXPLORER["landing_pages"], "GA4 landing pages error")
+    ga4_timeseries = _try(
+        lambda: connectors.fetch_ga4_timeseries(prop, sa, days=max(days, 30),
+                                                organic_only=organic_only, end_date=end_date),
+        _EMPTY_EXPLORER["ga4_timeseries"], "GA4 timeseries error")
+    gsc_timeseries = _try(
+        lambda: connectors.fetch_gsc_timeseries(site, sa, days=max(days, 30), end_date=end_date),
+        [], "GSC timeseries error")
+    # Admin-curated brand variants win over domain-derived guessing — only a
+    # human knows that hdfcbank.com is also searched as plain "hdfc".
+    brand_terms = [t.strip() for t in (client_cfg.get("brand_terms") or "").split(",")
+                   if t.strip()] or None
+    brand_split = _try(
+        lambda: connectors.fetch_gsc_brand_split(site, sa, days, end_date=end_date,
+                                                 brand_terms=brand_terms, top_n=200),
+        _EMPTY_EXPLORER["brand_split"], "GSC brand split error")
+    intent = _try(
+        lambda: connectors.fetch_gsc_intent_breakdown(site, sa, days, end_date=end_date,
+                                                      brand_terms=brand_terms, top_n=50),
+        _EMPTY_EXPLORER["intent"], "GSC intent error")
+    hourly = _try(lambda: connectors.fetch_gsc_hourly(site, sa, days=3, end_date=end_date),
+                  [], "GSC hourly error")
+    discover = _try(lambda: connectors.fetch_gsc_discover(site, sa, days, end_date=end_date),
+                    _EMPTY_EXPLORER["discover"], "GSC Discover error")
+
+    segments: dict = {}
+    for key, dim in (("device", "deviceCategory"), ("country", "country"),
+                     ("source", "sessionSourceMedium")):
+        segments[key] = _try(
+            lambda d=dim: connectors.fetch_ga4_breakdown(prop, sa, dimension=d, days=days,
+                                                         organic_only=organic_only,
+                                                         end_date=end_date, limit=15, **pv),
+            {"rows": []}, f"GA4 {dim} breakdown error")
+    segments["gsc_device"] = _try(
+        lambda: connectors.fetch_gsc_by_dimension(site, sa, dimension="device", days=days,
+                                                  end_date=end_date, top_n=10),
+        {"rows": []}, "GSC device error")
+
+    # Inspect the highest-value URLs only (top landing pages by clicks).
+    inspect_urls = []
+    base = site.rstrip("/")
+    for r in (gsc or [])[:_INSPECT_URL_BUDGET]:
+        page = r.get("page", "")
+        if page.startswith("http"):
+            inspect_urls.append(page)
+        elif page:
+            inspect_urls.append(base + ("" if page.startswith("/") else "/") + page)
+    inspection = _try(
+        lambda: connectors.fetch_gsc_url_inspection(site, sa, inspect_urls,
+                                                    max_urls=_INSPECT_URL_BUDGET),
+        _EMPTY_EXPLORER["inspection"], "GSC URL inspection error") if inspect_urls else \
+        _EMPTY_EXPLORER["inspection"]
+
     return {
         "ga4": ga4, "ga4_totals": ga4_totals, "events": events, "gsc": gsc,
         "gsc_queries": gsc_queries, "gsc_queries_prev": gsc_queries_prev,
         "gsc_pairs": gsc_pairs, "clarity": clarity,
         "funnel": funnel,
         "indexation": indexation, "site": site, "is_demo": False, "errors": errors,
+        "landing_pages": landing_pages, "ga4_timeseries": ga4_timeseries,
+        "gsc_timeseries": gsc_timeseries, "brand_split": brand_split,
+        "intent": intent, "hourly": hourly, "discover": discover,
+        "segments": segments, "inspection": inspection,
     }
 
 
@@ -132,7 +219,7 @@ def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model:
                analyst_name: str = "", end_date: str | None = None,
                start_date: str | None = None, prev_start: str | None = None,
                prev_end: str | None = None,
-               on_progress=None) -> dict:
+               on_progress=None, with_ai: bool = True) -> dict:
     """
     Port of app.run_report — returns the preserved 10-module results dict.
     `credential` is (kind, blob) from services.credentials.resolve_credential.
@@ -140,6 +227,9 @@ def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model:
     period is the immediately preceding window of equal length.
     `on_progress(step_index, total_steps, label)` is called before each module
     so the API can report per-module progress to the polling frontend.
+    `with_ai=False` skips every Gemini narrative call (and the AI rate-limit
+    gaps) — the report is then fast, free, and quota-proof, keeping all the
+    real computed tables/charts. This is the default mode for day-to-day use.
     Raises RuntimeError if GA4 returns nothing (same guard as the Streamlit app).
     """
     kind, blob = credential
@@ -170,8 +260,10 @@ def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model:
             pagespeed_data[pp] = connectors.fetch_pagespeed_metrics(abs_url, _settings.google_pagespeed_api_key)
             crux_data[pp] = connectors.fetch_crux_metrics(abs_url, _settings.google_pagespeed_api_key)
 
-    gk = _settings.gemini_api_key
-    grok = _settings.xai_api_key
+    # AI keys only when this run wants narratives; None makes every module's
+    # reasoning() call short-circuit to a placeholder we strip below.
+    gk = _settings.gemini_api_key if with_ai else None
+    grok = _settings.xai_api_key if with_ai else None
     results: dict = {}
 
     # Live SERP checks (serper.dev, one batched request) — ONLY the middle-band
@@ -207,6 +299,23 @@ def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model:
         ("hidden_insights", "Hidden Insights", lambda: analysis.module_hidden_insights(data["ga4"], data["gsc"], data["clarity"], gk, model)),
         ("indexation", "Indexation Health", lambda: analysis.module_indexation_health(
             data["indexation"], gk, model, gsc_rows=data["gsc"])),
+        # --- Explorer-backed modules -----------------------------------------
+        ("landing_pages", "Landing Page Acquisition",
+         lambda: analysis.module_landing_pages(data["landing_pages"], gk, model)),
+        ("trends", "Daily Trends",
+         lambda: analysis.module_trends(data["ga4_timeseries"], data["gsc_timeseries"], gk, model)),
+        ("brand_split", "Brand vs Non-Brand",
+         lambda: analysis.module_brand_split(data["brand_split"], gk, model)),
+        ("intent", "Search Intent",
+         lambda: analysis.module_search_intent(data["intent"], gk, model)),
+        ("segments", "Audience & Segments",
+         lambda: analysis.module_segments(data["segments"], gk, model)),
+        ("hourly", "Hourly Pulse",
+         lambda: analysis.module_hourly_pulse(data["hourly"], gk, model)),
+        ("discover", "Google Discover",
+         lambda: analysis.module_discover(data["discover"], gk, model)),
+        ("index_inspection", "Index Inspection",
+         lambda: analysis.module_index_inspection(data["inspection"], gk, model)),
     ]
     total_steps = len(steps) + 1  # + executive summary
 
@@ -214,12 +323,22 @@ def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model:
         if on_progress:
             on_progress(i, total_steps, label)
         results[key] = fn()
-        if i < len(steps) - 1:
+        # The rate gap only exists to stay under Gemini's rate limit — skip it
+        # entirely for no-AI runs so they finish in seconds.
+        if with_ai and i < len(steps) - 1:
             time.sleep(_RATE_GAP_SECONDS)
 
     if on_progress:
         on_progress(len(steps), total_steps, "Executive Summary")
     results["exec"] = analysis.module_executive_summary(results, gk, model, grok_key=grok)
+
+    # No-AI run: drop the placeholder narratives so no empty "AI Analysis" cards
+    # render. All structured findings (key_points, tables, charts) are untouched.
+    if not with_ai:
+        for mod in results.values():
+            if isinstance(mod, dict) and "narrative" in mod:
+                mod["narrative"] = ""
+
     results["_meta"] = {
         "site": data["site"],
         "is_demo": data.get("is_demo", False),
@@ -233,6 +352,7 @@ def run_report(client_cfg: dict, credential: tuple[str, dict], days: int, model:
         "analyst": analyst_name,
         "errors": data.get("errors", []),
         "serper_credits": serper_credits,
+        "ai": with_ai,
     }
     results["_ga4_totals"] = data.get("ga4_totals", {})
     return results
