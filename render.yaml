@@ -1,6 +1,10 @@
-# Render Blueprint — deploys the FastAPI backend + a managed Postgres.
+# Render Blueprint — deploys the FastAPI backend as a free web service.
 # In Render: New → Blueprint → pick this repo. Secrets (sync:false) are entered
 # in the dashboard after the first apply.
+#
+# Postgres is NOT provisioned here — Render's free Postgres expires 30 days
+# after creation. DATABASE_URL points at a Neon connection string instead
+# (neon.tech, free tier has no expiration), entered as a dashboard secret.
 services:
   - type: web
     name: seo-backend
@@ -8,15 +12,14 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: .
     healthCheckPath: /health
-    plan: starter        # 'free' works but spins down when idle (cold starts);
-                         # 'starter' keeps report jobs reliable.
+    plan: free            # sleeps after 15 min idle, ~50s cold start on wake —
+                          # the frontend's status polling counts as activity,
+                          # so an in-progress report keeps it awake.
     envVars:
       - key: ENVIRONMENT
         value: production
       - key: DATABASE_URL
-        fromDatabase:
-          name: seo-db
-          property: connectionString
+        sync: false        # paste the Neon connection string here
       - key: SESSION_SECRET
         generateValue: true
       # --- secrets: set these in the Render dashboard (sync:false) ---
@@ -50,7 +53,3 @@ services:
         sync: false
       - key: CLIENTS_JSON
         sync: false
-
-databases:
-  - name: seo-db
-    plan: free           # free Postgres is fine to start
